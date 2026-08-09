@@ -24,27 +24,27 @@
 不需要 git，只需要一条命令：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<你的用户名>/kaiti-writer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dshmyz/kaiti-writer/main/install.sh | bash
 ```
 
 或者下载后运行：
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/<你的用户名>/kaiti-writer/main/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/dshmyz/kaiti-writer/main/install.sh
 bash install.sh
 ```
 
 ### 方式 2：git clone
 
 ```bash
-git clone https://github.com/<你的用户名>/kaiti-writer.git
+git clone https://github.com/dshmyz/kaiti-writer.git
 cd kaiti-writer
 bash install.sh
 ```
 
 ### 方式 3：下载 ZIP
 
-1. 访问 https://github.com/<你的用户名>/kaiti-writer
+1. 访问 https://github.com/dshmyz/kaiti-writer
 2. 点击绿色 **"Code"** 按钮 → **"Download ZIP"**
 3. 解压后运行 `bash install.sh`
 
