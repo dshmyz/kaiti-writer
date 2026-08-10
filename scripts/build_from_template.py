@@ -29,6 +29,9 @@ def is_empty_p(p):
     """空段：无文字、无续接图形（表格单元格/绘图/嵌入对象）——用于清理多余空行。"""
     if p.tag != q("p"): return False
     if text_of(p).strip(): return False
+    # 带 sectPr 的段落是分节符（封面→目录→正文的换页靠它），绝不能当空段删
+    ppr = p.find(q("pPr"))
+    if ppr is not None and ppr.find(q("sectPr")) is not None: return False
     # 带 drawing/pict（图片、文本框）或 bookmarkStart 起定位作用的段落不算“空”，不能随手删
     if p.find(q("r") + "/" + q("drawing")) is not None: return False
     if p.find(q("r") + "/" + q("pict")) is not None: return False
@@ -800,44 +803,39 @@ def build(template: Path, content_path: Path, output: Path):
         for el in to_remove:
             body.remove(el)
 
-    # ---- 9.5 清理正文区多余空行，消除“一大堆空白页” ----
-    # 模板各节标题之间自带若干空段；插入正文后这些空段若连续堆积（每段都是整行），
-    # 会渲染成大片空白甚至整页空页。只在正文区（“开题报告”标题之后）处理：
-    # 1) 把连续≥2 个空段折叠成 1 个，保留节与节之间的自然隔行；
-    # 2) 删掉正文区最末尾的连续空段（避免文档末尾拖出空白页）。
-    # 封面/目录区不动——那几次 sectPr 的翻页靠它们撑着；body 子元素排序由 lxml 维护。
-    if body_start is not None:
-        body_children = list(body)
-        try:
-            bi = body_children.index(body_start)
-        except ValueError:
-            bi = None
-        if bi is not None:
-            # (a) 折叠正文区连续空段为 1：从后往前扫，跳过末尾段先记下来
-            #     先做末尾裁剪：从 body 末尾往前找最后一个非空段
-            end = len(body_children)
-            while end - 1 > bi and is_empty_p(body_children[end - 1]):
-                end -= 1
-            # 中间段折叠（i 从 bi 到 end-1）
-            i = bi + 1
-            while i < end:
-                if is_empty_p(body_children[i]):
-                    span = 1
-                    while i + span < end and is_empty_p(body_children[i + span]):
-                        span += 1
-                    if span > 1:
-                        for k in range(i + 1, i + span):
-                            body.remove(body_children[k])
-                        del body_children[i + 1: i + span]
-                        end -= (span - 1)
-                    i += 1
-                else:
-                    i += 1
-            # 末尾裁剪：删除 bi..end 之外的尾部空段（end 之后到 body 末）
-            for k in range(end, len(body_children)):
-                if is_empty_p(body_children[k]):
+    # ---- 9.5 清理全文档多余空行，消除“一大堆空白页/很多空行” ----
+    # 官方模板的封面区、目录区自带大量空白段（有的行距还特别大，如 line=460 exact），
+    # 会在封面页底部、目录页末尾堆出大片空白，看起来像“夹了一页空白/很多空行”。
+    # 这里对整个 body 统一处理（不再限于正文区）：
+    #   1) 把连续≥2 个空段折叠成 1 个（保留一处作为节与节之间的自然隔行/封面推位）；
+    #   2) 删掉文档最末尾的连续空段（避免文末拖出空白页）。
+    # 分节符段（sectPr）已由 is_empty_p 排除，不会被折叠或误删——封面→目录→正文的
+    # nextPage 换页由 SECT 自身保证，不依赖空段“撑着”。
+    body_children = list(body)
+    # (a) 从 body 末尾往前找最后一个非空段，作为末尾裁剪界；SECT 视为非空，天然止住
+    end = len(body_children)
+    while end - 1 > 0 and is_empty_p(body_children[end - 1]):
+        end -= 1
+    # (b) 中间段折叠：连续≥2 空段折成 1 个
+    i = 0
+    while i < end:
+        if is_empty_p(body_children[i]):
+            span = 1
+            while i + span < end and is_empty_p(body_children[i + span]):
+                span += 1
+            if span > 1:
+                for k in range(i + 1, i + span):
                     body.remove(body_children[k])
-            del body_children[end:]
+                del body_children[i + 1: i + span]
+                end -= (span - 1)
+            i += 1
+        else:
+            i += 1
+    # (c) 末尾裁剪：删掉 end 之后到 body 末尾的空段
+    for k in range(end, len(body_children)):
+        if is_empty_p(body_children[k]):
+            body.remove(body_children[k])
+    del body_children[end:]
 
     # ---- 写出（lxml tostring 保留命名空间前缀与 standalone 声明）----
     out_xml = ET.tostring(root, encoding="utf-8", xml_declaration=True, standalone=True)
