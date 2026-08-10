@@ -76,6 +76,51 @@ def set_text_keep_style(shape, text: str):
         p._p.getparent().remove(p._p)
 
 
+def estimate_lines(text: str, box_width_emu: int, font_pt: float) -> int:
+    """估算文本在给定宽度的文本框里需要多少行。"""
+    # 中文字符约 font_pt * 0.55mm 宽，英文约 font_pt * 0.3mm；取混合均值 0.45mm
+    char_width_mm = font_pt * 0.45
+    box_width_mm = box_width_emu / 36000  # EMU → mm
+    chars_per_line = max(1, int(box_width_mm / char_width_mm))
+    # 按换行符和自动换行估算行数
+    total_lines = 0
+    for paragraph in text.split("\n"):
+        if not paragraph.strip():
+            total_lines += 1
+        else:
+            total_lines += max(1, -(-len(paragraph) // chars_per_line))  # 向上取整
+    return total_lines
+
+
+def fit_text_to_shape(shape, text: str, min_font_pt: float = 9.0):
+    """将文本写入形状，若溢出则逐步缩小字号直到能装下；保留原始样式为起点。"""
+    from pptx.util import Pt
+    tf = shape.text_frame
+    # 估算当前字号
+    font_pt = 12.0
+    if tf.paragraphs and tf.paragraphs[0].runs:
+        rpr = tf.paragraphs[0].runs[0].font
+        if rpr.size:
+            font_pt = rpr.size.pt
+    # 估算可用行数
+    available_lines = max(1, int(shape.height / (font_pt * 12700 * 1.3)))  # 1.3x line spacing
+    needed = estimate_lines(text, shape.width, font_pt)
+    # 如果溢出，逐步缩字号
+    while needed > available_lines and font_pt > min_font_pt:
+        font_pt -= 0.5
+        needed = estimate_lines(text, shape.width, font_pt)
+    # 写入文字
+    set_text_keep_style(shape, text)
+    # 如果缩了字号，应用到第一个 run
+    if tf.paragraphs and tf.paragraphs[0].runs:
+        final_size = Pt(font_pt)
+        for p in tf.paragraphs:
+            for r in p.runs:
+                r.font.size = final_size
+    if needed > available_lines:
+        print(f"  ⚠ 文本框装不下，已缩到 {font_pt:.1f}pt 仍可能溢出: \"{text[:30]}…\"")
+
+
 def iter_text_shapes(container):
     """递归遍历（含 GROUP 组合形状内部）所有有文字的形状。
 
@@ -172,15 +217,26 @@ def fill_section(slide, idx, name):
 
 
 def fill_content(slide, title, bullets):
-    """内容页：首块占位当标题，其余占位块依次填要点，多余清空。"""
+    """内容页：选最大的占位块当标题、最大的当内容；内容用 fit_text_to_shape 防溢出。"""
     clear_decor(slide)
     slots = [sh for sh in text_shapes(slide) if is_placeholder(sh.text_frame.text)]
     if not slots:
         clean_watermarks(slide)
         return
-    set_text_keep_style(slots[0], title)
-    for i, sh in enumerate(slots[1:]):
-        set_text_keep_style(sh, bullets[i] if i < len(bullets) else "")
+    # 按面积排序，最大的当内容、次大的当标题
+    slots_by_area = sorted(slots, key=lambda s: (s.width or 0) * (s.height or 0), reverse=True)
+    content_shape = slots_by_area[0]
+    title_shape = slots_by_area[1] if len(slots_by_area) > 1 else slots_by_area[0]
+    # 写标题（短文本，用原始样式即可）
+    set_text_keep_style(title_shape, title)
+    # 写内容（多条 bullets，用 fit 防溢出）
+    full_text = "\n".join(bullets)
+    fit_text_to_shape(content_shape, full_text)
+    # 剩余小占位块清空
+    used = {content_shape, title_shape}
+    for sh in slots:
+        if sh not in used:
+            set_text_keep_style(sh, "")
     clean_watermarks(slide)
 
 
