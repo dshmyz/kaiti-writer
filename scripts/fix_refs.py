@@ -229,7 +229,7 @@ def unmark_red_docx(path: str) -> None:
     """定稿用：清除 docx 中由本脚本加的红色(FF0000)待补提示 run，恢复单色合规。
 
     只删颜色恰为 FF0000（或 FFFF0000）的 run，避免误删参考文献里本来就着色的文字
-    （如黑色显式着色、脚注链接色等）。
+    （如黑色显式着色、脚注链接色等）。只作用于参考文献区（见 _ref_paras）。
     """
     ET, root, members = _load_docx(path)
     W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -249,6 +249,49 @@ def unmark_red_docx(path: str) -> None:
         print("没有可清除的红色待补 run")
 
 
+def clear_noise_red_docx(path: str, keep_marker: str = "〈待确认"):
+    """清全文档(正文/目录/附录)里的"噪声红"，只保留带保留标记的确认红。
+
+    场景：正文里残留模板自带的目录缓存红字、误染红的文字等，统一清掉；而
+    你**要留给用户确认**的红用统一的保留标记（默认 `〈待确认`）标出，这一类
+    不删。与 `--unmark-red`（只清参考文献区待补红）互补、不冲突：
+        --unmark-red          只清参考文献区，删 FF0000 红（含标记红）
+        --clear-noise-red     清正文/目录/附录区，删 FF0000 但【不含】保留标记的红
+    参考文献区（"参考文献："之后、以 [n] 开头的段）整体跳过，避免撞车。
+    保留判定用"run 文本以 keep_marker 开头"（前缀，默认 `〈待确认`）：
+    `〈待确认〉`、`〈待确认：数据口径〉`、`〈待确认xxx〉` 都命中保留；严格子串
+    会把 `〈待确认：…〉` 当噪声误删，故用前缀而非整串。
+    只删有文字的 run：空 run 与组织结构 run 不动，降低误删风险。
+    """
+    ET, root, members = _load_docx(path)
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    q = lambda t: f"{{{W}}}{t}"
+    is_red = lambda col: col is not None and col.get(q("val"), "").upper() in ("FF0000", "FFFF0000")
+    # 参考文献区段的集合（该区归 --unmark-red 管，这里跳过）
+    ref_paras = set(id(p) for p in _ref_paras(ET, root, q))
+    removed = 0
+    for body_p in root.iter(q("p")):
+        if id(body_p) in ref_paras:
+            continue
+        for r in list(body_p.findall(q("r"))):
+            rpr = r.find(q("rPr"))
+            col = rpr.find(q("color")) if rpr is not None else None
+            if not is_red(col):
+                continue
+            rtext = "".join(t.text or "" for t in r.iter(q("t")))
+            if not rtext.strip():
+                continue            # 空 run / 结构 run 不动
+            if rtext.lstrip().startswith(keep_marker):
+                continue            # 带保留标记（前缀）的确认红，保留
+            body_p.remove(r)
+            removed += 1
+    if removed:
+        _write_docx(members, path, root)
+        print(f"已清除 {removed} 个非确认红 run（保留含 {keep_marker} 前缀的红）→ 正文噪声红已清理")
+    else:
+        print("未发现需清除的非确认红，或正文已干净")
+
+
 def main():
     ap = argparse.ArgumentParser(description="参考文献 GB/T 7714 收尾核查与缺项红色标注")
     ap.add_argument("--content", help="content.json 路径（修其 refs 数组）")
@@ -259,13 +302,19 @@ def main():
     ap.add_argument("--mark-missing", default=None, metavar='"6:发文字号待补;11:…"',
                     help="给 docx 缺项条目就地加红色提示（序号:提示文案，分号分隔）")
     ap.add_argument("--unmark-red", action="store_true",
-                    help="定稿：清除 docx 里所有着色待补提示 run")
+                    help="定稿：清除 docx 参考文献区里所有红色待补提示 run")
+    ap.add_argument("--clear-noise-red", action="store_true",
+                    help="清全文档(正文/目录/附录)非确认红，只保留含〈待确认〉标记的红（跳过参考文献区）")
     args = ap.parse_args()
 
     if args.mark_missing:
         mark_missing_docx(args.docx, args.mark_missing)
     elif args.unmark_red:
         unmark_red_docx(args.docx)
+    elif args.clear_noise_red:
+        if not args.docx:
+            ap.error("--clear-noise-red 需要 --docx")
+        clear_noise_red_docx(args.docx)
     else:
         if not args.content and not args.docx:
             ap.error("至少给 --content 或 --docx 之一")
