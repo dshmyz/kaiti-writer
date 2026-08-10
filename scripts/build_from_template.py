@@ -132,6 +132,28 @@ def set_run_text(p, text, *, eastasia="宋体", ascii_font="Times New Roman",
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     t.text = text; r.append(t); p.append(r)
 
+def set_outline(p, level):
+    """给段落设大纲级别 w:outlineLvl（0 章 / 1 节 / 2 条），使 TOC 域 (TOC \\o "1-4") 收录。
+
+    模板的节/条/参考文献/附录标题没有标题样式；TOC 域按大纲级别/标题样式收集条目，
+    不设 outlineLvl 的话一旦刷新目录域(F9)，这些项就从目录里消失。
+    outlineLvl 在 CT_PPr 序列里位于 jc 之后、rPr 之前。
+    """
+    pPr = p.find(q("pPr"))
+    if pPr is None:
+        pPr = ET.Element(q("pPr")); p.insert(0, pPr)
+    ol = pPr.find(q("outlineLvl"))
+    if ol is None:
+        ol = ET.Element(q("outlineLvl"))
+        anchor = next((e for e in pPr if e.tag in (q("rPr"), q("sectPr"))), None)
+        if anchor is not None:
+            anchor.addprevious(ol)
+        else:
+            pPr.append(ol)
+    ol.set(q("val"), str(level))
+    return p
+
+
 def set_spacing(p, *, line=None, before_lines=None, after_lines=None):
     """按书写规范显式强制段落的行距与段前段后，覆盖模板继承的旧值。
 
@@ -716,21 +738,56 @@ def build(template: Path, content_path: Path, output: Path):
             anchor = insert_block(blk, anchor)
         ctx["in_appendix"] = False
 
-    # ---- 8.5 规范正文区章/节/条标题的行距 ----
+    # ---- 8.5 规范正文区章/节/条标题的行距 + 大纲级别 ----
     # 模板自带标题段行距是 1.5 倍（line=360），而书写规范 1.2 要求三级标题单倍、
     # 段前段后各 0.5 行。逐段把正文区（body_start 之后）的标题段强制成规范值覆盖模板旧值；
     # 新建正文段已由构造函数落实，这里补模板自带的标题段与换行后的标题。
+    # 同时给章/节/条标题设 outlineLvl（章0 / 节1 / 条2）：模板的节/条/参考文献/附录标题
+    # 都没挂标题样式，TOC 域 (TOC \o "1-4") 只按大纲级别/标题样式收录——不加的话，
+    # 用户一刷新目录域(F9)，节/条/附录/参考文献就会从目录里消失，只剩章标题。
     if body_start is not None:
         from re import compile as _re
         _ZHANG = _re(r"^(一|二|三|四|五|六|七|八|九|十)、")
         _JIE = _re(r"^[（(](一|二|三|四|五|六|七|八|九|十)[)）]")
         _TIAO = _re(r"^\d+[、.]")
+        paras_ = body.findall(q("p"))
         start_idx = list(body).index(body_start)
-        for p in body.findall(q("p"))[start_idx:]:
+        # 只在主文档区处理标题（到 参考文献/附录 之前为止）——附录里的访谈提纲、
+        # 问卷子标题、题号不进目录。目录粒度对齐模板缓存：章(一级) + 节(二级)。
+        end_idx = len(paras_)
+        for a in paras_[start_idx:]:
+            if text_of(a).strip().startswith(("参考文献", "附录")):
+                end_idx = list(body).index(a); break
+        for p in paras_[start_idx:end_idx]:
             t = text_of(p).strip()
-            if _ZHANG.match(t) or _JIE.match(t) or _TIAO.match(t):
-                # 单倍行距、段前段后各 0.5 行；保留 pStyle（进目录）与缩进，只改 spacing
+            if _ZHANG.match(t):
+                set_outline(p, 0)
                 set_spacing(p, line=240, before_lines=50, after_lines=50)
+            elif _JIE.match(t):
+                set_outline(p, 1)
+                set_spacing(p, line=240, before_lines=50, after_lines=50)
+            elif _TIAO.match(t):
+                # 条标题：只规范行距（单倍+0.5行），不进目录（粒度到节级）
+                set_spacing(p, line=240, before_lines=50, after_lines=50)
+
+    # 参考文献 / 附录 标题进目录（一级）；它们标题无 pStyle，若不设 outlineLvl，
+    # 模板缓存里手写的目录项一次 F9 刷新就没了。
+    # 用【精确文本】匹配标题段——find_para_after 是子串匹配，正文里"…（见附录）…"
+    # 会误命中，须按整段文本等于"附录"/"参考文献："来找。
+    for needle, level in (("参考文献：", 0), ("附录", 0)):
+        hp = None
+        if body_start is not None:
+            sib = body_start.getnext()
+            while sib is not None and hp is None:
+                if sib.tag == q("p") and text_of(sib).strip() == needle:
+                    hp = sib
+                sib = sib.getnext()
+        if hp is None:
+            for _p in body.findall(q("p")):
+                if text_of(_p).strip() == needle:
+                    hp = _p; break
+        if hp is not None:
+            set_outline(hp, level)
 
     # ---- 9. 删除“书写规范”段及之后全部（含 body-level sectPr），让 idx90 的 sectPr 收尾 ----
     spec_p = find_para(body, "书写规范")
@@ -934,6 +991,58 @@ def check_refs_format(refs):
     return problems, sorted(set(placeholders))
 
 
+def check_line_spacing(root):
+    """按书写规范 1.2 自动核验正文区段落的行距/段前段后，返回不合规清单。
+
+    规范（references/格式规范.md「页面」）：
+      章/节/条三级标题 → 单倍行距（w:spacing line=240）、段前段后各 0.5 行（beforeLines/afterLines=50）
+      正文           → 1.5 倍行距（line=360）、段前段后 0 行
+    只扫正文区（"开题报告"标记之后、到"参考文献/附录"之前），逐段分类：命中章/节/条标题
+    模式的要求单倍+0.5 行；其余带正文文本的段要求 1.5 倍行距。附录里的访谈提纲/问卷子标题、
+    题号不是文档标题，不入检。表题/图题（表n/图n 开头）与参考文献（[n]）单列不误报。
+    返回 [(起头文本, 问题描述), …]；空列表即全部合规。
+    """
+    import re as _re
+    _ZHANG = _re.compile(r"^(一|二|三|四|五|六|七|八|九|十)、")
+    _JIE = _re.compile(r"^[（(](一|二|三|四|五|六|七|八|九|十)[)）]")
+    _TIAO = _re.compile(r"^\d+[、.]\s*\S")
+    _CAP = _re.compile(r"^(表|图)\d+")
+    _REF = _re.compile(r"^[\[［]\d+")
+    body = root.find(q("body"))
+    if body is None:
+        return []
+    paras = body.findall(q("p"))
+    body_start = next((i for i, p in enumerate(paras)
+                       if "".join(x.text or "" for x in p.iter(q("t"))).strip() == "开题报告"), -1)
+    if body_start < 0:
+        return []
+    # 主文档区：到 参考文献/附录 之前为止（附录内的访谈提纲/题号非文档标题，不核）
+    end_idx = len(paras)
+    for i in range(body_start + 1, len(paras)):
+        t0 = "".join(x.text or "" for x in paras[i].iter(q("t"))).strip()
+        if t0.startswith(("参考文献", "附录")):
+            end_idx = i
+            break
+    issues = []
+    for p in paras[body_start + 1:end_idx]:
+        t = "".join(x.text or "" for x in p.iter(q("t"))).strip()
+        if not t or _REF.match(t) or _CAP.match(t):
+            continue
+        ppr = p.find(q("pPr"))
+        sp = ppr.find(q("spacing")) if ppr is not None else None
+        line = int(sp.get(q("line"), 0)) if sp is not None else 0
+        bl = int(sp.get(q("beforeLines"), 0)) if sp is not None else 0
+        al = int(sp.get(q("afterLines"), 0)) if sp is not None else 0
+        head = bool(_ZHANG.match(t) or _JIE.match(t) or _TIAO.match(t))
+        if head:
+            if line != 240 or bl != 50 or al != 50:
+                issues.append((t[:20], f"标题应单倍行距、段前段后各0.5行（实测 line={line or 240} beforeLines={bl} afterLines={al}）"))
+        elif len(t) >= 10:
+            if line != 360:
+                issues.append((t[:20], f"正文应1.5倍行距（实测 line={line or 240}）"))
+    return issues
+
+
 def validate(path, data, ctx=None, scrubbed=None):
     from xml.etree import ElementTree as ET
     with ZipFile(path) as z:
@@ -1007,6 +1116,14 @@ def validate(path, data, ctx=None, scrubbed=None):
         print(f"  ⚠️ 参考文献著录格式待改（对照 references/参考文献著录.md）: {detail}{more}")
     else:
         print("  参考文献著录格式: 通过（自动核查未见硬性违规，仍建议人工过一遍姓名/页码写法）")
+    # 行距自动核验（书写规范 1.2：标题单倍+段前段后0.5行，正文1.5倍）
+    _sp_issues = check_line_spacing(root)
+    if _sp_issues:
+        _d = "；".join(f"「{t}」{m}" for t, m in _sp_issues[:6])
+        _m = f"；另有 {len(_sp_issues) - 6} 段类似" if len(_sp_issues) > 6 else ""
+        print(f"  ⚠️ 行距不合规范（对照 references/格式规范.md「页面」）: {_d}{_m}")
+    else:
+        print("  行距: 通过（标题单倍+段前段后各0.5行，正文1.5倍，表图题单倍）")
     ap_items = data.get("appendix") or []
     ap_first = next(iter(flatten_block_text(ap_items[:1])), "") if ap_items else ""
     print(f"  附录: {bool(ap_items) and bool(ap_first) and ap_first[:15] in text}"
