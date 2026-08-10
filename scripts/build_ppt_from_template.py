@@ -351,18 +351,21 @@ def validate_content_density(data):
 
     # 总页数检查（含封面/目录/致谢约 +3 页）
     effective = total_slides + 3
-    if effective < 18:
-        issues.append(f"总页数仅 {effective} 页，8 分钟汇报建议 20–25 页；"
-                      "每章至少 2 页（1 章节页 + ≥1 内容页），重点章节 3–4 页")
+    if effective > 20:
+        issues.append(f"总页数 {effective} 页偏多，8 分钟汇报建议 12–15 页；"
+                      "宁可每页说透，不要拆太多页导致每页太空")
+    if effective < 10:
+        issues.append(f"总页数仅 {effective} 页，建议至少 12 页以保证内容完整")
 
-    # 逐章检查
-    thin_chapters = []
+    # 逐章检查：每页 bullets 数量
+    thin_pages = []
     for ch in chapters:
-        n = len(ch.get("slides", []))
-        if n < 2:
-            thin_chapters.append(f"「{ch['name']}」仅 {n} 页")
-    if thin_chapters:
-        issues.append("以下章节内容过薄（<2 页），建议补充：" + "；".join(thin_chapters))
+        for sl in ch.get("slides", []):
+            n_bullets = len(sl.get("bullets", []))
+            if n_bullets < 3:
+                thin_pages.append(f"「{ch['name']}」→「{sl.get('title', '')[:20]}」仅 {n_bullets} 条")
+    if thin_pages:
+        issues.append("以下页面内容过薄（<3 条 bullets），建议补充或合并到相邻页：" + "；".join(thin_pages[:5]))
 
     # 检查是否有图表占位
     has_diagram = False
