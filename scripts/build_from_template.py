@@ -132,10 +132,49 @@ def set_run_text(p, text, *, eastasia="宋体", ascii_font="Times New Roman",
         t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     t.text = text; r.append(t); p.append(r)
 
+def set_spacing(p, *, line=None, before_lines=None, after_lines=None):
+    """按书写规范显式强制段落的行距与段前段后，覆盖模板继承的旧值。
+
+    格式规范（北航 1.2 页面设置）：
+      章/节/条三级标题 → 单倍行距（line=240），段前、段后各 0.5 行（beforeLines/afterLines=50）
+      正文           → 1.5 倍行距（line=360），段前、段后 0 行
+    line 为 None 则不写行距（保持单倍自动）；用 beforeLines/afterLines 表达"行"，
+    与 Word 的"段前段后 X 行"一致，不写 before/after 的 twips 数值。
+    """
+    pPr = p.find(q("pPr"))
+    if pPr is None:
+        pPr = ET.Element(q("pPr")); p.insert(0, pPr)
+    sp = pPr.find(q("spacing"))
+    if sp is None:
+        # CT_PPr 顺序：spacing → ind → jc → rPr，插到 ind/jc/rPr 三者中靠前者的前面
+        sp = ET.Element(q("spacing"))
+        anchor = next((e for e in pPr if e.tag in (q("ind"), q("jc"), q("rPr"))), None)
+        if anchor is not None:
+            anchor.addprevious(sp)
+        else:
+            pPr.append(sp)
+    # 重建 spacing，避免残留模板/示例的 before/after/line 干扰（这些是 XML 属性，须按名清除）
+    for k in ("before", "after", "line", "lineRule", "beforeLines", "afterLines",
+              "beforeAutospacing", "afterAutospacing"):
+        sp.attrib.pop(q(k), None)
+    if line is not None:
+        sp.set(q("line"), str(line)); sp.set(q("lineRule"), "auto")
+    if before_lines is not None:
+        sp.set(q("beforeLines"), str(before_lines))
+    if after_lines is not None:
+        sp.set(q("afterLines"), str(after_lines))
+    return p
+
+
 def clone_body_para(template_body_p, text):
-    """深拷贝正文模板段（保留 pPr 缩进/行距），注入正文 run。"""
+    """深拷贝正文模板段（保留 pPr 缩进/段落样式），注入正文 run，并强制规范行距。
+
+    正文：1.5 倍行距（line=360）、段前段后 0 行（格式规范 1.2）。deepcopy 继承的
+    模板 before/after 与行距一律以这里显式设置的为准，避免把示例段旧值带进全文。
+    """
     p = deepcopy(template_body_p)
     for r in list(p.findall(q("r"))): p.remove(r)
+    set_spacing(p, line=360, before_lines=0, after_lines=0)
     set_run_text(p, text, eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
     return p
 
@@ -150,6 +189,8 @@ def make_heading_para(text, heading_tpl):
     rpr = first_run_rpr(p)
     rpr = deepcopy(rpr) if rpr is not None else None
     for r in list(p.findall(q("r"))): p.remove(r)
+    # 章/节/条标题：单倍行距（line=240），段前、段后各 0.5 行（格式规范 1.2）
+    set_spacing(p, line=240, before_lines=50, after_lines=50)
     run = ET.SubElement(p, q("r"))
     if rpr is not None:
         run.append(rpr)
@@ -193,7 +234,11 @@ def make_caption(text, kind, num, *, body_tpl=None):
         pPr = ET.Element(q("pPr")); p.insert(0, pPr)
     for tag in (q("ind"), q("jc")):
         for old in list(pPr.findall(tag)): pPr.remove(old)
-    ET.SubElement(pPr, q("jc")).set(q("val"), "center")
+    # 居中段（表题/图题/插图）不再继承正文模板的 before/after 行距：单倍、段前段后 0
+    set_spacing(p, line=240, before_lines=0, after_lines=0)
+    jc = ET.SubElement(pPr, q("jc")); jc.set(q("val"), "center")
+    if (rpr := pPr.find(q("rPr"))) is not None:
+        pPr.remove(jc); rpr.addprevious(jc)
     set_run_text(p, f"{kind}{num}  {text}", eastasia="宋体",
                  ascii_font="Times New Roman", sz_halfpt=SZ_FIVE, bold=True)
     return p
@@ -249,7 +294,11 @@ def make_image_para(rid, cx, cy, name="image", *, body_tpl=None):
         pPr = ET.Element(q("pPr")); p.insert(0, pPr)
     for tag in (q("ind"), q("jc")):
         for old in list(pPr.findall(tag)): pPr.remove(old)
-    ET.SubElement(pPr, q("jc")).set(q("val"), "center")
+    # 居中段（表题/图题/插图）不再继承正文模板的 before/after 行距：单倍、段前段后 0
+    set_spacing(p, line=240, before_lines=0, after_lines=0)
+    jc = ET.SubElement(pPr, q("jc")); jc.set(q("val"), "center")
+    if (rpr := pPr.find(q("rPr"))) is not None:
+        pPr.remove(jc); rpr.addprevious(jc)
     run = ET.SubElement(p, q("r"))
     drawing = ET.SubElement(run, q("drawing"))
     inline = ET.SubElement(drawing, f"{{{WP}}}inline")
@@ -285,11 +334,23 @@ def make_list_para(text, num_id, *, body_tpl=None, ilvl=0):
         pPr = ET.Element(q("pPr")); p.insert(0, pPr)
     for tag in (q("numPr"), q("ind")):
         for old in list(pPr.findall(tag)): pPr.remove(old)
-    numPr = ET.SubElement(pPr, q("numPr"))
+    # CT_PPr 顺序：numPr → spacing → ind → jc → rPr；这里按序重建以规避顺序违规
+    set_spacing(p, line=360, before_lines=0, after_lines=0)
+    rpr = pPr.find(q("rPr"))
+    numPr = ET.Element(q("numPr"))
     ET.SubElement(numPr, q("ilvl")).set(q("val"), str(ilvl))
     ET.SubElement(numPr, q("numId")).set(q("val"), str(num_id))
-    ind = ET.SubElement(pPr, q("ind"))
+    sp = pPr.find(q("spacing"))
+    if rpr is not None:
+        rpr.addprevious(numPr)
+    elif sp is not None:
+        sp.addprevious(numPr)
+    else:
+        pPr.append(numPr)
+    ind = ET.SubElement(pPr, q("ind")) if rpr is None else ET.Element(q("ind"))
     ind.set(q("left"), str(420 + 420 * ilvl)); ind.set(q("firstLine"), "0")
+    if rpr is not None:
+        rpr.addprevious(ind)
     set_run_text(p, text, eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
     return p
 
@@ -654,6 +715,22 @@ def build(template: Path, content_path: Path, output: Path):
         for blk in data["appendix"]:
             anchor = insert_block(blk, anchor)
         ctx["in_appendix"] = False
+
+    # ---- 8.5 规范正文区章/节/条标题的行距 ----
+    # 模板自带标题段行距是 1.5 倍（line=360），而书写规范 1.2 要求三级标题单倍、
+    # 段前段后各 0.5 行。逐段把正文区（body_start 之后）的标题段强制成规范值覆盖模板旧值；
+    # 新建正文段已由构造函数落实，这里补模板自带的标题段与换行后的标题。
+    if body_start is not None:
+        from re import compile as _re
+        _ZHANG = _re(r"^(一|二|三|四|五|六|七|八|九|十)、")
+        _JIE = _re(r"^[（(](一|二|三|四|五|六|七|八|九|十)[)）]")
+        _TIAO = _re(r"^\d+[、.]")
+        start_idx = list(body).index(body_start)
+        for p in body.findall(q("p"))[start_idx:]:
+            t = text_of(p).strip()
+            if _ZHANG.match(t) or _JIE.match(t) or _TIAO.match(t):
+                # 单倍行距、段前段后各 0.5 行；保留 pStyle（进目录）与缩进，只改 spacing
+                set_spacing(p, line=240, before_lines=50, after_lines=50)
 
     # ---- 9. 删除“书写规范”段及之后全部（含 body-level sectPr），让 idx90 的 sectPr 收尾 ----
     spec_p = find_para(body, "书写规范")
