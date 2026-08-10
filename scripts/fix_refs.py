@@ -123,7 +123,9 @@ def _ref_paras(ET, root, q):
     body = root.find(q("body"))
     paras = body.findall(q("p"))
     txt = lambda p: "".join(t.text or "" for t in p.iter(q("t")))
-    hdr = next(i for i, p in enumerate(paras) if txt(p).strip() == "参考文献：")
+    hdr = next((i for i, p in enumerate(paras) if txt(p).strip() == "参考文献："), None)
+    if hdr is None:
+        return []
     refs = []
     for p in paras[hdr + 1:]:
         t = txt(p).strip()
@@ -224,23 +226,27 @@ def mark_missing_docx(path: str, mapping: str) -> None:
 
 
 def unmark_red_docx(path: str) -> None:
-    """定稿用：清除 docx 中所有红色(FF0000)/其它着色的待补提示 run，恢复单色合规。"""
+    """定稿用：清除 docx 中由本脚本加的红色(FF0000)待补提示 run，恢复单色合规。
+
+    只删颜色恰为 FF0000（或 FFFF0000）的 run，避免误删参考文献里本来就着色的文字
+    （如黑色显式着色、脚注链接色等）。
+    """
     ET, root, members = _load_docx(path)
     W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     q = lambda t: f"{{{W}}}{t}"
+    is_red = lambda col: col is not None and col.get(q("val"), "").upper() in ("FF0000", "FFFF0000")
     removed = 0
     for p in _ref_paras(ET, root, q):
         for r in list(p.findall(q("r"))):
             rpr = r.find(q("rPr"))
-            col = rpr.find(q("color")) if rpr is not None else None
-            if col is not None:
+            if is_red(rpr.find(q("color")) if rpr is not None else None):
                 p.remove(r)
                 removed += 1
     if removed:
         _write_docx(members, path, root)
-        print(f"已清除 {removed} 个着色 run → 参考文献可定稿")
+        print(f"已清除 {removed} 个红色待补 run → 参考文献可定稿")
     else:
-        print("没有可清除的着色 run")
+        print("没有可清除的红色待补 run")
 
 
 def main():

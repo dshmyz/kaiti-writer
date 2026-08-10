@@ -803,21 +803,30 @@ def build(template: Path, content_path: Path, output: Path):
         for el in to_remove:
             body.remove(el)
 
-    # ---- 9.5 清理全文档多余空行，消除“一大堆空白页/很多空行” ----
-    # 官方模板的封面区、目录区自带大量空白段（有的行距还特别大，如 line=460 exact），
-    # 会在封面页底部、目录页末尾堆出大片空白，看起来像“夹了一页空白/很多空行”。
-    # 这里对整个 body 统一处理（不再限于正文区）：
-    #   1) 把连续≥2 个空段折叠成 1 个（保留一处作为节与节之间的自然隔行/封面推位）；
+    # ---- 9.5 清理目录区/正文区/文末多余空行，消除“一大堆空白页/很多空行” ----
+    # 官方模板的目录区、正文区自带大量空白段（有的行距还特别大，如 line=460 exact），
+    # 会在目录页末尾、文末堆出大片空白，看起来像“夹了一页空白/很多空行”。
+    # 处理范围：从第一个分节符（sectPr 段）之后的目录区开始，直到文档末尾——
+    #   1) 把连续≥2 个空段折叠成 1 个（保留一处作为节与节之间的自然隔行）；
     #   2) 删掉文档最末尾的连续空段（避免文末拖出空白页）。
-    # 分节符段（sectPr）已由 is_empty_p 排除，不会被折叠或误删——封面→目录→正文的
-    # nextPage 换页由 SECT 自身保证，不依赖空段“撑着”。
+    # 封面区整体不动：banner→题目→封面表格的垂直定位靠那些空段（有的还带
+    # beforeLines=20 下推、line=460 exact 行距）撑着，压掉会让封面排版挤到页顶。
+    # 先找第一个带 sectPr 的段，作为封面区结束、压缩区开始的分界（start）；
+    # 之后的分节符段由 is_empty_p 排除，换页由 SECT 自身保证，不依赖空段“撑着”。
     body_children = list(body)
+    start = 0
+    for idx, el in enumerate(body_children):
+        if el.tag == q("p"):
+            ppr = el.find(q("pPr"))
+            if ppr is not None and ppr.find(q("sectPr")) is not None:
+                start = idx + 1
+                break
     # (a) 从 body 末尾往前找最后一个非空段，作为末尾裁剪界；SECT 视为非空，天然止住
     end = len(body_children)
-    while end - 1 > 0 and is_empty_p(body_children[end - 1]):
+    while end - 1 > start and is_empty_p(body_children[end - 1]):
         end -= 1
-    # (b) 中间段折叠：连续≥2 空段折成 1 个
-    i = 0
+    # (b) 中间段折叠：连续≥2 空段折成 1 个（仅在 start 之后，封面区外）
+    i = start
     while i < end:
         if is_empty_p(body_children[i]):
             span = 1
