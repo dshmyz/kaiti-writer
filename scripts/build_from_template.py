@@ -46,6 +46,30 @@ def find_para_exact(body, needle):
         if text_of(p).strip() == needle: return p
     return None
 
+def trim_toc_field_end(body):
+    """清掉目录 TOC 字段末尾的红色模板说明行。
+
+    模板目录是一个 TOC 域，其"结果"缓存里带一段样板条目；字段末尾（fldChar=end
+    所在段）常缀一句红字帮助语，如「附录（若论文包含访谈或问卷，需提供访谈、问卷提纲）」。
+    这句既不是用户自己的内容，也不该出现在目录里（它是给作者看的说明），而且 Word
+    打开时 F9 会用真实标题重建整个目录。这里把该段的可见文字（保留 fldChar=end run）
+    清成空，避免用户看到模板残留。
+    """
+    end_p = None
+    for p in body.findall(q("p")):
+        if p.find(f"{q('r')}/{q('fldChar')}") is not None:
+            for fc in p.iter(q("fldChar")):
+                if fc.get(q("fldCharType")) == "end":
+                    end_p = p
+    if end_p is None:
+        return False
+    # 保留仅含 fldChar=end 的 run，删掉其余文本/tab run
+    for r in list(end_p.findall(q("r"))):
+        if r.find(q("fldChar")) is not None:
+            continue
+        end_p.remove(r)
+    return True
+
 def find_para_after(body, needle, start_p):
     """在 start_p 之后的 body 子元素中查找含 needle 的 <w:p>（避免命中目录 TOC）。用 lxml getnext 链遍历兄弟。"""
     sib = start_p.getnext()
@@ -480,6 +504,8 @@ def build(template: Path, content_path: Path, output: Path):
         t = text_of(p)
         if "导师建议" in t and ("可按照" in t or "可结合" in t):
             body.remove(p)
+    # 目录 TOC 字段末的红字说明（如「附录（若论文包含访谈或问卷…）」）也清掉
+    trim_toc_field_end(body)
 
     # ---- 6. 在各节标题后插入正文内容（只在正文区查找，避开目录 TOC） ----
     # 混排块：字符串=正文段；{"table":…} / {"image":…} / {"list":…} / {"footnote":…}
@@ -802,6 +828,35 @@ def section_char_counts(data):
     return out
 
 
+def check_refs_format(refs):
+    """按 GB/T 7714 著录规则（references/参考文献著录.md）对 refs 逐条做自动化核查。
+
+    只做机器能判定的硬性违规，返回 [(序号, 问题)…]；逐条说明性规范（作者名写法、
+    页码起止等）仍靠人工按 自查清单，这里不误报。占位条目（〈〉/待核验/TODO）单列。
+    """
+    import re
+    # GB/T 7714 文献类型标识：[J][M][A/C][D][P][S][N][R][G][Z]
+    DOC_TYPES = "AJMNDPSRGZ"
+    # 电子文献 [类型/载体]：类型∈{DB,CP,M,EB}，载体∈{MT,DK,CD,OL}
+    ELEC_MAIN = "(?:DB|CP|M|EB)"
+    ELEC_CARRIER = "(?:MT|DK|CD|OL)"
+    # 合法标识头：[J]、[Z]、[EB/OL]、[M/CD]、[DB/MT]…
+    TYPE_RE = rf"\[(?:[{DOC_TYPES}]|{ELEC_MAIN}/{ELEC_CARRIER})\]"
+    problems, placeholders = [], []
+    for i, raw in enumerate(refs, 1):
+        s = str(raw)
+        # 占位：待核验/待补/〈XXX〉/TODO——作为"未完成"单独报，不掺进格式问题
+        if any(m in s for m in ("〈", "〉", "待核验", "待补", "待验证", "TODO", "XXX")):
+            placeholders.append(i)
+        # ① 缺文献类型标识 [J]/[M]/[Z]/[EB/OL]…（含电子文献）
+        if not re.search(TYPE_RE, s):
+            problems.append((i, "缺文献类型标识 [J]/[M]/[Z]/[R]/[S]/[EB/OL] 等"))
+        # ② 条目末尾带了结束符（句点/逗号/分号/顿号）
+        if re.search(r"[.,;:、，。；：]+$", s.strip()):
+            problems.append((i, "条目末尾有结束符（GB/T 7714 每条末不加标点）"))
+    return problems, sorted(set(placeholders))
+
+
 def validate(path, data, ctx=None, scrubbed=None):
     from xml.etree import ElementTree as ET
     with ZipFile(path) as z:
@@ -813,7 +868,7 @@ def validate(path, data, ctx=None, scrubbed=None):
     tables = root.findall(f"{q('body')}/{q('tbl')}")
     chinese = sum(1 for c in text if '一' <= c <= '鿿')
     leftover = any(x in text for x in ["宏大百货", "书写规范", "可按照导师建议",
-                                       "论文题目论文题目", "目录按章、节、条"])
+                                       "附录（若论文包含访谈或问卷", "目录按章、节、条"])
     # 未填占位：〈〉是本 skill 大纲/范例的占位约定，连同 TODO/待补/待定/XXX 一起查。
     # 与 leftover 分开报——leftover 是"模板自带说明没删净"，这里是"内容自己没写完"，
     # 混在一条里会让用户以为改的是同一个地方。
@@ -867,6 +922,14 @@ def validate(path, data, ctx=None, scrubbed=None):
               f"{'（word/footnotes.xml 已写入）' if ctx['footnotes'] else ''}")
     print(f"  参考文献: {bool(data.get('refs')) and str(data['refs'][0])[:20] in text}"
           f"{f' ⚠️ 其中 {unfilled_refs} 条仍是占位（未换成真实文献）{tag}' if unfilled_refs else ''}")
+    # GB/T 7714 逐条自动核查（格式硬性违规 + 占位单列）
+    ref_problems, _ph = check_refs_format(data.get("refs") or [])
+    if ref_problems:
+        detail = "；".join(f"[{n}]{msg}" for n, msg in ref_problems[:8])
+        more = f"；另有 {len(ref_problems) - 8} 条类似" if len(ref_problems) > 8 else ""
+        print(f"  ⚠️ 参考文献著录格式待改（对照 references/参考文献著录.md）: {detail}{more}")
+    else:
+        print("  参考文献著录格式: 通过（自动核查未见硬性违规，仍建议人工过一遍姓名/页码写法）")
     ap_items = data.get("appendix") or []
     ap_first = next(iter(flatten_block_text(ap_items[:1])), "") if ap_items else ""
     print(f"  附录: {bool(ap_items) and bool(ap_first) and ap_first[:15] in text}"
