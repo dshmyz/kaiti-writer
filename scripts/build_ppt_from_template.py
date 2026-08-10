@@ -318,6 +318,7 @@ def build(template: Path, content_path: Path, output: Path):
     prs.save(str(output))
     print("saved:", output)
     validate(output, data, scrubbed=scrubbed)
+    validate_content_density(data)
 
 
 def validate(path, data, scrubbed=None):
@@ -340,6 +341,62 @@ def validate(path, data, scrubbed=None):
         print("  ↑ 提示：复杂图表页可能仍有占位文字/图片，需在 PowerPoint 手动微调")
     if scrubbed:
         print(f"  文档属性已清理: {scrubbed}（模板原作者姓名/邮箱已清空）")
+
+
+def validate_content_density(data):
+    """检查 ppt_content.json 的内容密度是否达标，给出改进建议。"""
+    chapters = data.get("chapters", [])
+    total_slides = sum(len(ch.get("slides", [])) for ch in chapters)
+    issues = []
+
+    # 总页数检查（含封面/目录/致谢约 +3 页）
+    effective = total_slides + 3
+    if effective < 18:
+        issues.append(f"总页数仅 {effective} 页，8 分钟汇报建议 20–25 页；"
+                      "每章至少 2 页（1 章节页 + ≥1 内容页），重点章节 3–4 页")
+
+    # 逐章检查
+    thin_chapters = []
+    for ch in chapters:
+        n = len(ch.get("slides", []))
+        if n < 2:
+            thin_chapters.append(f"「{ch['name']}」仅 {n} 页")
+    if thin_chapters:
+        issues.append("以下章节内容过薄（<2 页），建议补充：" + "；".join(thin_chapters))
+
+    # 检查是否有图表占位
+    has_diagram = False
+    for ch in chapters:
+        for sl in ch.get("slides", []):
+            for b in sl.get("bullets", []):
+                if "【图" in b or "【表" in b or "路线图" in b:
+                    has_diagram = True
+    if not has_diagram:
+        issues.append("未发现图表占位（【图：xxx】/【表：xxx】），研究框架/路线图/时间表建议嵌图")
+
+    # 检查章节标题是否太泛
+    generic_titles = {"研究背景", "文献综述", "研究方法", "创新之处", "实施计划",
+                      "选题意义", "研究框架", "研究思路"}
+    for ch in chapters:
+        for sl in ch.get("slides", []):
+            if sl.get("title", "") in generic_titles:
+                issues.append(f"页面标题「{sl['title']}」太泛——应写具体观点，不是章节名")
+                break
+
+    # 检查占位残留
+    for ch in chapters:
+        for sl in ch.get("slides", []):
+            for b in sl.get("bullets", []):
+                if "见下页" in b or "添加" in b:
+                    issues.append(f"「{ch['name']}」存在占位残留：「{b}」— 要么嵌入内容，要么写【图：xxx】占位")
+
+    if issues:
+        print("\n⚠ 内容密度自检：")
+        for i, issue in enumerate(issues, 1):
+            print(f"  {i}. {issue}")
+        print("  ↑ 以上问题不影响生成，但会影响汇报质量。建议补充后重新生成。")
+    else:
+        print("\n✓ 内容密度自检通过")
 
 
 def main():
