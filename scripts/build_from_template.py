@@ -1143,13 +1143,80 @@ def validate(path, data, ctx=None, scrubbed=None):
     if scrubbed:
         print(f"  文档属性已清理: {scrubbed}（模板原作者姓名/邮箱/单位已清空，避免把他人信息带进你的稿件）")
 
+def diff_docx(old_path: Path, new_path: Path):
+    """比较两份 docx 的文本差异，输出新增/删除/修改了什么。"""
+    try:
+        from docx import Document
+    except ImportError:
+        print("⚠ diff 需要 python-docx：pip install python-docx")
+        return
+
+    def get_paragraphs(path):
+        doc = Document(str(path))
+        return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+
+    old_paras = get_paragraphs(old_path)
+    new_paras = get_paragraphs(new_path)
+
+    # 简单的逐段 diff
+    old_set = set(old_paras)
+    new_set = set(new_paras)
+
+    added = [p for p in new_paras if p not in old_set]
+    deleted = [p for p in old_paras if p not in new_set]
+
+    # 找修改（旧段落去掉前后空白后在新段落里找不到，但新段落里有相似的）
+    modified = []
+    for op in old_paras:
+        if op in deleted:
+            continue
+        for np in new_paras:
+            if np in added and op[:20] == np[:20] and op != np:
+                modified.append((op, np))
+                break
+
+    print("=" * 50)
+    print(f"改稿 diff：{old_path.name} → {new_path.name}")
+    print(f"  旧文档: {len(old_paras)} 段  |  新文档: {len(new_paras)} 段")
+
+    if not added and not deleted and not modified:
+        print("  ✅ 无差异")
+        return
+
+    if added:
+        print(f"\n  📝 新增 {len(added)} 段：")
+        for p in added[:10]:
+            print(f"    + {p[:80]}{'…' if len(p) > 80 else ''}")
+        if len(added) > 10:
+            print(f"    … 另有 {len(added) - 10} 段")
+
+    if deleted:
+        print(f"\n  🗑 删除 {len(deleted)} 段：")
+        for p in deleted[:10]:
+            print(f"    - {p[:80]}{'…' if len(p) > 80 else ''}")
+        if len(deleted) > 10:
+            print(f"    … 另有 {len(deleted) - 10} 段")
+
+    if modified:
+        print(f"\n  ✏️ 修改 {len(modified)} 段：")
+        for old, new in modified[:5]:
+            print(f"    ~ 旧: {old[:60]}{'…' if len(old) > 60 else ''}")
+            print(f"      新: {new[:60]}{'…' if len(new) > 60 else ''}")
+        if len(modified) > 5:
+            print(f"    … 另有 {len(modified) - 5} 处")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--template", required=True, type=Path)
     ap.add_argument("--content", required=True, type=Path)
     ap.add_argument("--output", required=True, type=Path)
+    ap.add_argument("--diff", type=Path, default=None,
+                    help="改稿时传入旧版 docx 路径，生成后自动输出 diff")
     a = ap.parse_args()
     build(a.template, a.content, a.output)
+    if a.diff and a.diff.exists():
+        diff_docx(a.diff, a.output)
 
 if __name__ == "__main__":
     main()
