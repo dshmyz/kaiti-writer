@@ -16,6 +16,7 @@ description: 撰写、审阅、修订北京航空航天大学（北航）研究�
 >
 > **工具名映射（非 Claude 环境照此代入，全文不再重复说明）**：
 > - 下文说的 **`AskUserQuestion`** = "**一次性把 2–3 个选择题连同选项列给用户、等他回答再往下**"。没有这个工具就**直接在回复里写编号选项**（如 `A/B/C`，并说明"可自己输入其他答案"），然后**停下等用户回答**——**关键是"停下来等"，不是自己替用户选**。
+> - **每个问题的选项须 ≥2 个真实选项，否则不要调用 AskUserQuestion。** 某个待确认事项若只有 1 条既定路径（如论文类型已由决策树判死、没有第二种选择），`options` 少于 2 会让工具直接报 `InputValidationError` 并连同整批问题一起全部发不出去；此时把它当**既定前提直接陈述**推进即可，只把同一批里确有 2+ 个选项的问题留下。细节见 `references/选题引导.md`「调 AskUserQuestion 的硬性要求」。
 > - 下文说的 **`WebSearch`/`WebFetch`** = 任意联网检索/抓取能力。没有就走 `references/文献检索.md` 的 `curl` 直连开放 API（OpenAlex/Crossref）；**完全无网时不许编造文献**，按该文件第二级请用户提供文献。
 
 ## 何时使用
@@ -124,6 +125,7 @@ description: 撰写、审阅、修订北京航空航天大学（北航）研究�
    > **一节一确认，别攒到最后**：写完**文献综述**和**研究方法**这两节各停一次，把这一节给用户看并问"这节方向对不对"。这两节是被导师退回的高发区（综述罗列不分类、方法只列名不可操作），且一旦方向错了，后面几节都要跟着改。其余节可连续写完再一并回显。每节篇幅按档位走，别为凑字数注水。
    > **去AI化中间扫描**：给用户看之前，先按 `references/去AI化写作守则.md` 扫一遍——有没有出现「进一步/深入/切实/多措并举/技术赋能/筑牢/赋能/新范式/深度融合」等高频 AI 句式？有没有三句以上平行排比？有没有抽象堆叠（"具有重要的理论意义和现实意义"）？**有就当场改掉再给用户看**，不要等自查才补。这是去AI化唯一的检查窗口——自查时只查格式与内容完整性，不再逐句审文字。
 5. **生成 .docx（标准路径，仿 buaa-final-assignment 范式）**：把内容写成 `content.json`（格式见下），用内置脚本基于官方模板生成，**不重建文档、保留全部模板样式**：
+   > **写 Python 处理中文 json / 文本时的编码护栏**（脚本质量）：`ensure_ascii=False` 是 **`json.dump()`** 的参数，不是 `open()` 的——写到文件用 `open(path,'w',encoding='utf-8')`，要保留中文可读则 `json.dump(obj, f, ensure_ascii=False)`；**绝不要写成 `open(..., 'w', ensure_ascii=False)`**（会直接抛 `TypeError: 'ensure_ascii' is an invalid keyword argument for open()`）。凡把中文内容（content.json、route.json 的节点文字、演讲稿正文、文献条目）落盘，一律显式 `encoding='utf-8'`，避免默认编码导致的中文乱码。
    ```bash
    python "$SKILL/scripts/build_from_template.py" \
      --template "$SKILL/assets/templates/开题报告模板.docx" \
