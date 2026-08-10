@@ -290,6 +290,62 @@ def duplicate_slide(prs, src_slide, pristine_xml=None):
     return new_slide
 
 
+def polish_slides(slides):
+    """统一字体、段间距、清残余装饰，让填完文字的 PPT 视觉一致。"""
+    from pptx.util import Pt
+    from pptx.oxml.ns import qn
+
+    for slide in slides:
+        for sh in iter_text_shapes(slide):
+            if not sh.has_text_frame:
+                continue
+            tf = sh.text_frame
+            for para in tf.paragraphs:
+                for run in para.runs:
+                    # 中文统一宋体，西文统一 Calibri
+                    run.font.name = "Calibri"
+                    rpr = run._r.get_or_add_rPr()
+                    rFonts = rpr.find(qn("a:latin"))
+                    if rFonts is None:
+                        from lxml import etree
+                        rFonts = etree.SubElement(rpr, qn("a:latin"))
+                    rFonts.set("typeface", "Calibri")
+                    ea = rpr.find(qn("a:ea"))
+                    if ea is None:
+                        from lxml import etree
+                        ea = etree.SubElement(rpr, qn("a:ea"))
+                    ea.set("typeface", "宋体")
+
+                # 段间距：段前 6pt、段后 2pt、行距 1.2 倍
+                pPr = para._p.get_or_add_pPr()
+                spc_before = pPr.find(qn("a:spcBef"))
+                if spc_before is None:
+                    from lxml import etree
+                    spc_before = etree.SubElement(pPr, qn("a:spcBef"))
+                spc_pct = spc_before.find(qn("a:spcPts"))
+                if spc_pct is None:
+                    from lxml import etree
+                    # 清掉可能存在的 spcPct
+                    for child in list(spc_before):
+                        spc_before.remove(child)
+                    spc_pct = etree.SubElement(spc_before, qn("a:spcPts"))
+                spc_pct.set("val", str(int(6 * 100)))  # 6pt = 600 百分之一磅
+
+                spc_after = pPr.find(qn("a:spcAft"))
+                if spc_after is None:
+                    from lxml import etree
+                    spc_after = etree.SubElement(pPr, qn("a:spcAft"))
+                spc_aft_pts = spc_after.find(qn("a:spcPts"))
+                if spc_aft_pts is None:
+                    from lxml import etree
+                    for child in list(spc_after):
+                        spc_after.remove(child)
+                    spc_aft_pts = etree.SubElement(spc_after, qn("a:spcPts"))
+                spc_aft_pts.set("val", str(int(2 * 100)))  # 2pt
+
+    print("  ✓ 已统一字体(宋体+Calibri)和段间距(段前6pt/段后2pt)")
+
+
 def build(template: Path, content_path: Path, output: Path):
     data = json.loads(content_path.read_text(encoding="utf-8"))
     key = next((k for k in TEMPLATE_MAP if k in template.stem), None)
@@ -357,6 +413,9 @@ def build(template: Path, content_path: Path, output: Path):
     keep_idx = [i + 1 for i, s in enumerate(prs.slides) if s.part.partname in keep_partnames]
     drop_slides(prs, keep_idx)
     reorder_slides(prs, order)
+
+    # ── 美化：统一字体 + 段间距 + 清残余装饰 ──
+    polish_slides(order)
 
     # 清掉内置模板带来的第三方个人信息：模板是借用的往届答辩稿，
     # docProps/core.xml 里留着原作者姓名与邮箱。不清则每份汇报 PPT 都会在
