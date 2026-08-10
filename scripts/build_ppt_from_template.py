@@ -13,7 +13,7 @@ try:
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 except ImportError:
     raise SystemExit(
-        "缺少 python-pptx，无法生成 PPT。\n"
+        "❌ 缺少 python-pptx，无法生成 PPT。\n"
         "  安装：pip install python-pptx（或 python3 -m pip install python-pptx）\n"
         "  不想安装：可改为只要「markdown 逐页大纲」，自己粘进 PPT。"
     )
@@ -350,14 +350,14 @@ def build(template: Path, content_path: Path, output: Path):
     data = json.loads(content_path.read_text(encoding="utf-8"))
     key = next((k for k in TEMPLATE_MAP if k in template.stem), None)
     if key is None:
-        raise SystemExit(f"未识别的模板：{template.name}（应含 模板1/模板2/模板3）")
+        raise SystemExit(f"❌ 未识别的模板：{template.name}（应含 模板1/模板2/模板3）")
     roles = TEMPLATE_MAP[key]
 
     prs = Presentation(str(template))
     slides = list(prs.slides)
     chapters = data.get("chapters", [])
     if not chapters:
-        raise SystemExit("content.json 缺少 chapters（章节列表）")
+        raise SystemExit("❌ content.json 缺少 chapters（章节列表）")
 
     cover_slide = slides[roles["cover"] - 1]
     toc_slide = slides[roles["toc"] - 1]

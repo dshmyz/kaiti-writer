@@ -9,7 +9,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 try:
     from lxml import etree as ET
 except ImportError:
-    raise SystemExit("缺少 lxml，请先安装：pip install lxml（lxml 原生保留命名空间前缀，"
+    raise SystemExit("❌ 缺少 lxml，请先安装：pip install lxml（lxml 原生保留命名空间前缀，"
                      "stdlib ElementTree 会把 wp/r/mc/w14 等前缀改名成 ns0/ns1，破坏 Word 文件）")
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -529,7 +529,12 @@ def scrub_docprops(entries: dict, author: str = "") -> list:
     return changed
 
 def build(template: Path, content_path: Path, output: Path):
+    import hashlib
     data = json.loads(content_path.read_text(encoding="utf-8"))
+    # 模板版本跟踪：打印模板文件的 MD5 前 8 位，方便排查"生成结果和上次不一样"
+    tpl_hash = hashlib.md5(template.read_bytes()).hexdigest()[:8]
+    tpl_size = template.stat().st_size
+    print(f"模板: {template.name}（{tpl_size//1024}KB, hash:{tpl_hash}）")
     with ZipFile(template) as zin:
         entries = {it.filename: zin.read(it.filename) for it in zin.infolist()}
         infolist = zin.infolist()
@@ -689,6 +694,11 @@ def build(template: Path, content_path: Path, output: Path):
             anchor = insert_block(block, anchor)
         # 空数组视为"本节留给 plan_table / 用户手填"，不算失败
         ctx["sections_ok"][sec_title] = (anchor is not hp) or not blocks
+        # 空节检测：有内容但总文字过少，可能是遗漏
+        if blocks:
+            total_chars = sum(len(b) for b in blocks if isinstance(b, str))
+            if total_chars < 50:
+                print(f"  ⚠「{sec_title}」内容过少（{total_chars} 字），可能遗漏或需补充")
 
     # plan_table 兼容旧格式：若"四、"节没在混排里给过表，仍按老写法补一张
     if data.get("plan_table"):
