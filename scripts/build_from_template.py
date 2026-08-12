@@ -197,12 +197,13 @@ def sort_citation_numbers(text: str) -> str:
     匹配 [数字, 数字, ...] 模式，提取数字列表排序后重写。
     仅处理纯数字序号（不含字母的引用标记），避免误改 [J]/[EB/OL] 等。
     """
+    import re as _re
     def _sort(m):
         nums = [int(x) for x in m.group(1).split(",")]
         if len(nums) > 1 and nums != sorted(nums):
             return "[" + ", ".join(str(n) for n in sorted(nums)) + "]"
         return m.group(0)
-    return re.sub(r"\[(\d+(?:\s*,\s*\d+)\s*)\]", _sort, text)
+    return _re.sub(r"\[(\d+(?:\s*,\s*\d+\s*)+)\]", _sort, text)
 
 
 def clone_body_para(template_body_p, text):
@@ -1028,6 +1029,7 @@ def check_refs_recency(refs, current_year=None):
     从每条参考文献中提取四位数年份，统计近5年文献数量。
     返回 (recent_count, total, percentage, is_ok)。
     """
+    import re as _re
     from datetime import datetime
     if current_year is None:
         current_year = datetime.now().year
@@ -1037,7 +1039,7 @@ def check_refs_recency(refs, current_year=None):
         return 0, 0, 0.0, False
     recent = 0
     for r in refs:
-        years = [int(y) for y in re.findall(r"(?:19|20)\d{2}", str(r))]
+        years = [int(y) for y in _re.findall(r"(?:19|20)\d{2}", str(r))]
         if any(cutoff <= y <= current_year for y in years):
             recent += 1
     pct = recent / total * 100
@@ -1169,6 +1171,12 @@ def validate(path, data, ctx=None, scrubbed=None):
         print(f"  ⚠️ 参考文献著录格式待改（对照 references/参考文献著录.md）: {detail}{more}")
     else:
         print("  参考文献著录格式: 通过（自动核查未见硬性违规，仍建议人工过一遍姓名/页码写法）")
+    # 参考文献近5年占比校验（要求≥50%）
+    _rec_recent, _rec_total, _rec_pct, _rec_ok = check_refs_recency(data.get("refs") or [])
+    if _rec_total:
+        _rec_icon = "✅" if _rec_ok else "⚠️"
+        print(f"  {_rec_icon} 参考文献近5年占比: {_rec_recent}/{_rec_total} = {_rec_pct:.1f}%"
+              f"{'' if _rec_ok else '（未过半，要求≥50%，请补充近5年文献）'}")
     # 行距自动核验（书写规范 1.2：标题单倍+段前段后0.5行，正文1.5倍）
     _sp_issues = check_line_spacing(root)
     if _sp_issues:
