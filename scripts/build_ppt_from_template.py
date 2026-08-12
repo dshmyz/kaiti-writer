@@ -683,6 +683,8 @@ def build(template: Path, content_path: Path, output: Path):
     print("saved:", output)
     validate(output, data, scrubbed=scrubbed)
     validate_content_density(data)
+    # 调用 pptx 技能的 validate.py 做文件级验证（XML schema / relationships / charts）
+    _run_pptx_validate(output, template)
 
 
 def validate(path, data, scrubbed=None):
@@ -705,6 +707,29 @@ def validate(path, data, scrubbed=None):
         print("  ↑ 提示：复杂图表页可能仍有占位文字/图片，需在 PowerPoint 手动微调")
     if scrubbed:
         print(f"  文档属性已清理: {scrubbed}（模板原作者姓名/邮箱已清空）")
+
+
+def _run_pptx_validate(output_path, template_path):
+    """调用 pptx 技能的 validate.py 做文件级验证。"""
+    import subprocess
+    # pptx 技能的 validate.py 路径
+    pptx_skill_dir = Path.home() / ".claude" / "skills" / "pptx"
+    validate_script = pptx_skill_dir / "scripts" / "office" / "validate.py"
+    if not validate_script.exists():
+        return  # pptx 技能未安装，跳过
+    try:
+        result = subprocess.run(
+            ["python3", str(validate_script), str(output_path), "--original", str(template_path)],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            print(f"  ⚠ pptx validate 发现问题：")
+            for line in result.stdout.strip().split("\n")[:10]:  # 最多显示10行
+                print(f"    {line}")
+        else:
+            print("  ✓ pptx validate 通过")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass  # 静默跳过，不影响主流程
 
 
 def validate_content_density(data):

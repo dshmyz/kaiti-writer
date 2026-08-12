@@ -191,6 +191,20 @@ def set_spacing(p, *, line=None, before_lines=None, after_lines=None):
     return p
 
 
+def sort_citation_numbers(text: str) -> str:
+    """把正文中的 [17, 16] 排序为 [16, 17]；单个 [n] 不动。
+
+    匹配 [数字, 数字, ...] 模式，提取数字列表排序后重写。
+    仅处理纯数字序号（不含字母的引用标记），避免误改 [J]/[EB/OL] 等。
+    """
+    def _sort(m):
+        nums = [int(x) for x in m.group(1).split(",")]
+        if len(nums) > 1 and nums != sorted(nums):
+            return "[" + ", ".join(str(n) for n in sorted(nums)) + "]"
+        return m.group(0)
+    return re.sub(r"\[(\d+(?:\s*,\s*\d+)\s*)\]", _sort, text)
+
+
 def clone_body_para(template_body_p, text):
     """深拷贝正文模板段（保留 pPr 缩进/段落样式），注入正文 run，并强制规范行距。
 
@@ -200,7 +214,7 @@ def clone_body_para(template_body_p, text):
     p = deepcopy(template_body_p)
     for r in list(p.findall(q("r"))): p.remove(r)
     set_spacing(p, line=360, before_lines=0, after_lines=0)
-    set_run_text(p, text, eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
+    set_run_text(p, sort_citation_numbers(text), eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
     return p
 
 def make_heading_para(text, heading_tpl):
@@ -1006,6 +1020,28 @@ def check_refs_format(refs):
         if re.search(r"[.,;:、，。；：]+$", s.strip()):
             problems.append((i, "条目末尾有结束符（GB/T 7714 每条末不加标点）"))
     return problems, sorted(set(placeholders))
+
+
+def check_refs_recency(refs, current_year=None):
+    """检查参考文献近5年占比是否过半（≥50%）。
+
+    从每条参考文献中提取四位数年份，统计近5年文献数量。
+    返回 (recent_count, total, percentage, is_ok)。
+    """
+    from datetime import datetime
+    if current_year is None:
+        current_year = datetime.now().year
+    cutoff = current_year - 4  # 如 2026 → 2022 起算
+    total = len(refs)
+    if total == 0:
+        return 0, 0, 0.0, False
+    recent = 0
+    for r in refs:
+        years = [int(y) for y in re.findall(r"(?:19|20)\d{2}", str(r))]
+        if any(cutoff <= y <= current_year for y in years):
+            recent += 1
+    pct = recent / total * 100
+    return recent, total, pct, pct >= 50.0
 
 
 def check_line_spacing(root):
