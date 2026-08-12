@@ -261,8 +261,8 @@ def fill_section(slide, idx, name):
 def fill_content(slide, title, bullets, layout="text_only", extra=None):
     """内容页：根据 layout 类型填充不同内容。
 
-    layout: text_only / image_center / chart / table
-    extra: 额外数据（图片路径、图表数据、表格数据）
+    layout: text_only / image_center / chart / table / big_number / comparison / timeline
+    extra: 额外数据（图片路径、图表数据、表格数据等）
     """
     clear_decor(slide)
 
@@ -274,6 +274,15 @@ def fill_content(slide, title, bullets, layout="text_only", extra=None):
         return
     if layout == "table" and extra:
         _fill_table_slide(slide, title, extra)
+        return
+    if layout == "big_number" and extra:
+        _fill_big_number_slide(slide, title, extra)
+        return
+    if layout == "comparison" and extra:
+        _fill_comparison_slide(slide, title, extra)
+        return
+    if layout == "timeline" and extra:
+        _fill_timeline_slide(slide, title, extra)
         return
 
     # 默认：文字内容页
@@ -297,6 +306,14 @@ def fill_content(slide, title, bullets, layout="text_only", extra=None):
         if sh not in used:
             set_text_keep_style(sh, "")
     clean_watermarks(slide)
+
+
+def set_slide_notes(slide, notes_text: str):
+    """设置幻灯片的演讲者备注。"""
+    if not notes_text:
+        return
+    notes_slide = slide.notes_slide
+    notes_slide.notes_text_frame.text = notes_text
 
 
 def _select_title_and_content(slots, slide_height):
@@ -481,6 +498,105 @@ def _fill_table_slide(slide, title, extra):
     clean_watermarks(slide)
 
 
+def _fill_big_number_slide(slide, title, extra):
+    """大数字页：页面中间放一个大数字，下面小字说明。"""
+    number = extra.get("number", "0%")
+    label = extra.get("label", "")
+
+    shapes = list(text_shapes(slide))
+    slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+
+    if not slots:
+        clean_watermarks(slide)
+        return
+
+    # 找最大的形状放大数字
+    big_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
+
+    # 写大数字（尽量大）
+    set_text_keep_style(big_slot, number)
+    # 设置字号尽可能大
+    if big_slot.has_text_frame:
+        from pptx.util import Pt
+        for para in big_slot.text_frame.paragraphs:
+            for run in para.runs:
+                run.font.size = Pt(72)  # 72pt 大数字
+                run.font.bold = True
+                from pptx.oxml.ns import qn
+                rpr = run._r.get_or_add_rPr()
+                ea = rpr.find(qn("a:ea"))
+                if ea is None:
+                    from lxml import etree
+                    ea = etree.SubElement(rpr, qn("a:ea"))
+                ea.set("typeface", "微软雅黑")
+
+    # 找一个较小的形状放说明文字
+    other_slots = [s for s in slots if s != big_slot]
+    if other_slots and label:
+        small_slot = min(other_slots, key=lambda s: (s.width or 0) * (s.height or 0))
+        set_text_keep_style(small_slot, label)
+
+    # 填标题
+    title_shapes = [sh for sh in shapes if sh not in (big_slot, small_slot if other_slots else None) if sh in slots]
+    if title_shapes:
+        set_text_keep_style(title_shapes[0], title)
+
+    clear_decor(slide)
+    clean_watermarks(slide)
+
+
+def _fill_comparison_slide(slide, title, extra):
+    """对比页：左右或上下对比展示。"""
+    items = extra.get("items", [])
+
+    shapes = list(text_shapes(slide))
+    slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+
+    if not slots or not items:
+        clean_watermarks(slide)
+        return
+
+    # 将 slots 按面积排序，最大的放第一个对比项
+    slots_by_area = sorted(slots, key=lambda s: (s.width or 0) * (s.height or 0), reverse=True)
+
+    # 写对比内容
+    for i, item in enumerate(items[:len(slots_by_area)]):
+        set_text_keep_style(slots_by_area[i], item)
+
+    # 填标题
+    if len(slots_by_area) > len(items):
+        set_text_keep_style(slots_by_area[len(items)], title)
+
+    clear_decor(slide)
+    clean_watermarks(slide)
+
+
+def _fill_timeline_slide(slide, title, extra):
+    """时间线页：按时间顺序展示。"""
+    items = extra.get("items", [])
+
+    shapes = list(text_shapes(slide))
+    slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+
+    if not slots or not items:
+        clean_watermarks(slide)
+        return
+
+    # 将 slots 按位置排序（从上到下、从左到右）
+    slots_by_pos = sorted(slots, key=lambda s: (s.top or 0, s.left or 0))
+
+    # 写时间线内容
+    for i, item in enumerate(items[:len(slots_by_pos)]):
+        set_text_keep_style(slots_by_pos[i], f"{i+1}. {item}")
+
+    # 填标题
+    if len(slots_by_pos) > len(items):
+        set_text_keep_style(slots_by_pos[len(items)], title)
+
+    clear_decor(slide)
+    clean_watermarks(slide)
+
+
 def drop_slides(prs, keep_indices):
     """删除未保留的页（1-based keep_indices），同时清理 sldIdLst 与关系。"""
     sldIdLst = prs.slides._sldIdLst
@@ -597,6 +713,9 @@ def build(template: Path, content_path: Path, output: Path):
         raise SystemExit(f"❌ 未识别的模板：{template.name}（应含 模板1/模板2/模板3）")
     roles = TEMPLATE_MAP[key]
 
+    # 自动修复内容密度问题（合并空洞页、精简超长 bullets）
+    data = auto_fix_content_density(data)
+
     prs = Presentation(str(template))
     slides = list(prs.slides)
     chapters = data.get("chapters", [])
@@ -643,6 +762,10 @@ def build(template: Path, content_path: Path, output: Path):
                 fill_content(slide, spec.get("title", ""), spec.get("bullets", []), layout, extra)
             else:
                 fill_content(slide, spec.get("title", ""), spec.get("bullets", []))
+            # 写入演讲者备注
+            notes = spec.get("notes", "")
+            if notes:
+                set_slide_notes(slide, notes)
             order.append(slide)
 
     if thanks_slide is not None:
@@ -685,6 +808,8 @@ def build(template: Path, content_path: Path, output: Path):
     validate_content_density(data)
     # 调用 pptx 技能的 validate.py 做文件级验证（XML schema / relationships / charts）
     _run_pptx_validate(output, template)
+    # 生成视觉预览图片
+    _generate_preview_images(output)
 
 
 def validate(path, data, scrubbed=None):
@@ -728,6 +853,52 @@ def _run_pptx_validate(output_path, template_path):
                 print(f"    {line}")
         else:
             print("  ✓ pptx validate 通过")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass  # 静默跳过，不影响主流程
+
+
+def _generate_preview_images(pptx_path):
+    """将 PPT 转为图片预览（需要 LibreOffice）。"""
+    import subprocess
+    output_dir = pptx_path.parent
+    pdf_path = output_dir / f"{pptx_path.stem}.pdf"
+
+    # 检查 pptx 技能的 soffice.py 是否存在
+    pptx_skill_dir = Path.home() / ".claude" / "skills" / "pptx"
+    soffice_script = pptx_skill_dir / "scripts" / "office" / "soffice.py"
+    if not soffice_script.exists():
+        return  # pptx 技能未安装，跳过
+
+    try:
+        # 先转 PDF
+        result = subprocess.run(
+            ["python3", str(soffice_script), "--headless", "--convert-to", "pdf", str(pptx_path)],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(output_dir)
+        )
+        if result.returncode != 0 or not pdf_path.exists():
+            return
+
+        # 再用 pdftoppm 转图片
+        import glob
+        old_images = glob.glob(str(output_dir / "slide-*.jpg"))
+        for img in old_images:
+            os.remove(img)
+
+        result = subprocess.run(
+            ["pdftoppm", "-jpeg", "-r", "150", str(pdf_path), str(output_dir / "slide")],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode == 0:
+            preview_files = sorted(glob.glob(str(output_dir / "slide-*.jpg")))
+            if preview_files:
+                print(f"  📸 视觉预览已生成：{len(preview_files)} 张图片")
+                print(f"  📂 路径：{output_dir}/slide-*.jpg")
+                # 列出前几张
+                for f in preview_files[:3]:
+                    print(f"    {Path(f).name}")
+                if len(preview_files) > 3:
+                    print(f"    ... 共 {len(preview_files)} 张")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass  # 静默跳过，不影响主流程
 
@@ -789,6 +960,56 @@ def validate_content_density(data):
         print("  ↑ 以上问题不影响生成，但会影响汇报质量。建议补充后重新生成。")
     else:
         print("\n✓ 内容密度自检通过")
+
+
+def auto_fix_content_density(data):
+    """自动修复内容密度问题：合并空洞页、精简超长 bullets。"""
+    chapters = data.get("chapters", [])
+    fixes = []
+
+    for ch in chapters:
+        slides = ch.get("slides", [])
+        if not slides:
+            continue
+
+        # 修复 1：合并空洞页（bullets < 2 的页合并到前一页）
+        merged_slides = []
+        for sl in slides:
+            bullets = sl.get("bullets", [])
+            if len(bullets) < 2 and merged_slides:
+                # 合并到前一页
+                prev = merged_slides[-1]
+                prev_bullets = prev.get("bullets", [])
+                prev_bullets.extend(bullets)
+                prev["bullets"] = prev_bullets
+                fixes.append(f"合并空洞页「{sl.get('title', '')}」到「{prev.get('title', '')}」")
+            else:
+                merged_slides.append(sl)
+        ch["slides"] = merged_slides
+
+        # 修复 2：精简超长 bullets（超过 25 字的截断）
+        for sl in ch.get("slides", []):
+            bullets = sl.get("bullets", [])
+            new_bullets = []
+            for b in bullets:
+                if len(b) > 25:
+                    # 按标点截断
+                    parts = re.split(r"[，。；、]", b)
+                    shortened = parts[0] if len(parts[0]) > 10 else b[:25]
+                    new_bullets.append(shortened)
+                    fixes.append(f"精简超长 bullet：「{b[:30]}...」→「{shortened}」")
+                else:
+                    new_bullets.append(b)
+            sl["bullets"] = new_bullets
+
+    if fixes:
+        print(f"\n🔧 自动修复了 {len(fixes)} 个问题：")
+        for fix in fixes[:10]:  # 最多显示 10 个
+            print(f"  • {fix}")
+    else:
+        print("\n✓ 无需自动修复")
+
+    return data
 
 
 def main():

@@ -49,6 +49,58 @@ def detect_missing(s: str) -> str | None:
     return m.group(0) if m else None
 
 
+# GB/T 7714 文献类型标识
+_DOC_TYPES = "AJMNDPSRGZC"
+_ELEC = r"(?:DB|CP|M|EB)/(?:MT|DK|CD|OL)"
+_TYPE_RE = re.compile(rf"\[(?:[{_DOC_TYPES}]|{_ELEC})\]")
+
+
+def validate_one(idx: int, s: str) -> list[str]:
+    """对单条参考文献做说明性规范校验，只报不修。
+
+    检查项：
+    1. 外文作者名是否"姓前名后、姓全大写"（如 TANG C S）
+    2. [J]/[C]/[A] 类型条目是否缺页码（": 起止页码"）
+    返回问题列表，空即合规。
+    """
+    problems = []
+    m_type = _TYPE_RE.search(s)
+    if not m_type:
+        return problems
+    type_code = m_type.group(0)
+
+    # --- 作者名大小写（仅外文作者，含半角字母的条目）---
+    # 提取类型标识前的作者部分（到第一个中文字符或类型标识前）
+    before_type = s[:m_type.start()].strip()
+    # 外文作者特征：含有拉丁字母+空格的模式（如 "TANG C S" 或 "Ladisa P"）
+    if re.search(r"[A-Za-z]{2,}", before_type):
+        # 检查是否所有英文"姓"都全大写（至少2个连续大写字母）
+        # 匹配作者区域的英文单词序列
+        author_words = re.findall(r"[A-Za-z]+", before_type)
+        if author_words:
+            # 第一个词是姓，应该全大写（至少2字母）
+            surname = author_words[0]
+            if len(surname) >= 2 and not surname.isupper():
+                # 排除文章标题/机构名：首字母大写 + 第二个词是多字母小写词
+                # （如 "Software supply chain..." 是标题；"Ladisa P" 是作者）
+                rest = author_words[1:]
+                is_likely_title = (
+                    surname[0].isupper() and not surname[1:].isupper()
+                    and rest and len(rest[0]) > 1 and rest[0][0].islower()
+                )
+                if not is_likely_title:
+                    problems.append(
+                        f"[{idx}] 作者姓 '{surname}' 未全大写（GB/T 7714 要求姓前名后、姓全大写，如 {surname.upper()}）")
+
+    # --- 页码缺失（[J]/[C]/[A] 类型）---
+    if any(f"[{t}]" in type_code for t in "JCA"):
+        # 页码模式：": 数字-数字" 或 ": 数字"
+        if not re.search(r":\s*\d+", s):
+            problems.append(f"[{idx}] {type_code} 类型条目缺页码（GB/T 7714 要求页码不可省）")
+
+    return problems
+
+
 # ---------- content.json ----------
 def fix_json(path: str, list_missing: bool, missing_out: str) -> None:
     with open(path, encoding="utf-8") as f:
@@ -76,6 +128,15 @@ def fix_json(path: str, list_missing: bool, missing_out: str) -> None:
         print(f"json refs 修复 {changed} 条 → 已写回 {path}")
     else:
         print("json refs 均符合 GB/T 7714，无需修复")
+    # 说明性规范校验（只报不修）
+    all_warns = []
+    for i, r in enumerate(refs):
+        if isinstance(r, str):
+            all_warns.extend(validate_one(i + 1, r))
+    if all_warns:
+        print(f"\n⚠️ 参考文献说明性规范（需人工修正）:")
+        for w in all_warns:
+            print(f"  {w}")
     if list_missing:
         _report_missing(missing, missing_out)
 
@@ -164,6 +225,17 @@ def fix_docx(path: str, list_missing: bool, missing_out: str) -> None:
         print(f"docx 参考文献修复 {changed} 段 → 已就地写回 {path}")
     else:
         print("docx 参考文献均符合 GB/T 7714，无需修复")
+    # 说明性规范校验（只报不修）
+    all_warns = []
+    ref_idx = 0
+    for p in _ref_paras(ET, root, q):
+        ref_idx += 1
+        t = "".join(x.text or "" for x in p.iter(q("t"))).strip()
+        all_warns.extend(validate_one(ref_idx, t))
+    if all_warns:
+        print(f"\n⚠️ 参考文献说明性规范（需人工修正）:")
+        for w in all_warns:
+            print(f"  {w}")
     if list_missing:
         _report_missing(missing, missing_out)
 

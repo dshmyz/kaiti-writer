@@ -1002,7 +1002,7 @@ def check_refs_format(refs):
     """
     import re
     # GB/T 7714 文献类型标识：[J][M][A/C][D][P][S][N][R][G][Z]
-    DOC_TYPES = "AJMNDPSRGZ"
+    DOC_TYPES = "AJMNDPSRGZC"
     # 电子文献 [类型/载体]：类型∈{DB,CP,M,EB}，载体∈{MT,DK,CD,OL}
     ELEC_MAIN = "(?:DB|CP|M|EB)"
     ELEC_CARRIER = "(?:MT|DK|CD|OL)"
