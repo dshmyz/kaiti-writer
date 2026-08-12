@@ -36,9 +36,15 @@ def clean_section_name(key: str) -> str:
     return re.sub(r"^[（(一二三四五六七八九十]+[）)]\s*", "", key).strip()
 
 
-def extract_bullets(items: list, max_bullets: int = 5) -> list[str]:
-    """从 content_by_section 的值数组中提取文本 bullets。"""
+def extract_bullets(items: list, max_bullets: int = 5) -> tuple[list, list]:
+    """从 content_by_section 的值数组中提取文本 bullets 和特殊布局页。
+
+    返回 (bullets, special_slides)：
+    - bullets: 普通文字要点
+    - special_slides: 需要特殊布局的页（图片/图表/表格）
+    """
     bullets = []
+    special_slides = []
     for item in items:
         if isinstance(item, str):
             # 长段落按句号拆分，取前几句
@@ -61,19 +67,43 @@ def extract_bullets(items: list, max_bullets: int = 5) -> list[str]:
         elif isinstance(item, dict):
             if "image" in item:
                 caption = item.get("caption", "技术路线图")
-                bullets.append(f"【图：{caption}】")
+                image_path = item.get("image", "")
+                # 图片页单独一页，不混在 bullets 里
+                special_slides.append({
+                    "title": caption,
+                    "layout": "image_center",
+                    "bullets": [],
+                    "extra": {"image": image_path, "caption": caption}
+                })
             elif "table" in item:
                 caption = item.get("caption", "")
                 headers = item["table"].get("headers", [])
-                bullets.append(f"【表：{caption or ' '.join(headers[:3])}】")
+                rows = item["table"].get("rows", [])
+                # 表格页单独一页
+                special_slides.append({
+                    "title": caption or " ".join(headers[:3]),
+                    "layout": "table",
+                    "bullets": [],
+                    "extra": {"table_data": {"headers": headers, "rows": rows}}
+                })
             elif "list" in item:
                 for li in item["list"][:3]:
                     bullets.append(f"● {li}")
                     if len(bullets) >= max_bullets:
                         break
+            elif "chart" in item:
+                # 图表数据
+                chart_type = item["chart"].get("type", "bar")
+                chart_data = item["chart"].get("data", {})
+                special_slides.append({
+                    "title": item.get("caption", "数据图表"),
+                    "layout": "chart",
+                    "bullets": [],
+                    "extra": {"chart_type": chart_type, "chart_data": chart_data}
+                })
         if len(bullets) >= max_bullets:
             break
-    return bullets
+    return bullets, special_slides
 
 
 def derive(content: dict) -> dict:
@@ -99,19 +129,26 @@ def derive(content: dict) -> dict:
     for key in ordered_keys:
         items = sections[key]
         name = clean_section_name(key)
-        bullets = extract_bullets(items)
+        bullets, special_slides = extract_bullets(items)
 
-        if not bullets:
+        slides = []
+
+        # 普通文字页
+        if bullets:
+            slide_spec = {"title": name, "bullets": bullets}
+            # 如果 bullets 超过 5 条，拆成两页
+            if len(bullets) > 5:
+                slides.append({"title": name, "bullets": bullets[:5]})
+                slides.append({"title": f"{name}（续）", "bullets": bullets[5:]})
+            else:
+                slides.append(slide_spec)
+
+        # 特殊布局页（图片/图表/表格）
+        for special in special_slides:
+            slides.append(special)
+
+        if not slides:
             continue
-
-        slides = [{"title": name, "bullets": bullets}]
-
-        # 如果 bullets 超过 5 条，拆成两页
-        if len(bullets) > 5:
-            slides = [
-                {"title": name, "bullets": bullets[:5]},
-                {"title": f"{name}（续）", "bullets": bullets[5:]},
-            ]
 
         ppt["chapters"].append({"name": name, "slides": slides})
 

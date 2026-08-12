@@ -26,7 +26,8 @@ TEMPLATE_MAP = {
 }
 
 # 模板作者水印 / 样例信息，一律清掉或替换
-WATERMARKS = ["星空情报站", "微信公众号", "公众号", "微信"]
+WATERMARKS = ["星空情报站", "微信公众号", "公众号", "微信", "BEIHANG UNIVERSITY",
+              "北京航空航天大学", "Beihang University"]
 
 # 判定为"占位文字"的特征（含则视为可替换的占位）
 PLACEHOLDER_HINTS = [
@@ -35,6 +36,7 @@ PLACEHOLDER_HINTS = [
     "你的标题", "你的模板你做主", "右键点击图片", "输入你的", "输入小标题", "输入标题",
     "输入文字说明", "输入你的观点", "你的模板", "Copy paste fonts", "Key words",
     "做的好的地方", "输入分点", "输入主题", "在这里输入", "输入你的内容",
+    "BEIHANG UNIVERSITY", "北京航空航天大学", "摘 要",
 ]
 
 # 纯装饰性文字：清空但不占内容位
@@ -43,7 +45,8 @@ DECOR_HINTS = ["JUNE 12th", "做的好的地方", "需要继续提升的地方",
                "General template for teaching", "ADD YOUR TITLE", "请输入你的副标题",
                "请输入你的标题说明", "以简洁为主说明本章", "摘 要", "关键词0",
                "Welcoming", "Thank you for your", "图示页排版", "纯图片页排版",
-               "小标题一", "小标题二", "小标题三", "小标题四", "段落标题"]
+               "小标题一", "小标题二", "小标题三", "小标题四", "段落标题",
+               "BEIHANG UNIVERSITY", "北京航空航天大学"]
 
 # 纯装饰的"占位符号"（整块就是这些字符时才清），如 XX、XX%、A/B/C 角标、示例日期
 DECOR_EXACT = re.compile(
@@ -182,19 +185,58 @@ def fill_cover(slide, data):
     clean_watermarks(slide)
 
 
+def _group_overlapping_shapes(shapes, tol=50000):
+    """将位置相近的形状归为一组（容忍 50000 EMU ≈ 0.5mm）。
+
+    模板的目录页常把多组视觉变体叠在相同位置，需要先分组再每组只取一个。
+    """
+    groups = []
+    used = set()
+    shapes_list = list(shapes)
+    for i, a in enumerate(shapes_list):
+        if i in used:
+            continue
+        group = [a]
+        used.add(i)
+        for j, b in enumerate(shapes_list):
+            if j in used:
+                continue
+            if (abs((a.top or 0) - (b.top or 0)) < tol and
+                    abs((a.left or 0) - (b.left or 0)) < tol):
+                group.append(b)
+                used.add(j)
+        groups.append(group)
+    return groups
+
+
 def fill_toc(slide, chapters):
-    """目录页：占位标题块按顺序换成章节名，多余的清空；纯序号块重排为 01/02…。"""
-    num_slots, title_slots = [], []
-    for sh in text_shapes(slide):
-        t = sh.text_frame.text.strip()
-        if re.fullmatch(r"0?\d{1,2}", t):
-            num_slots.append(sh)
-        elif is_placeholder(t) and "ADD YOUR" not in t:
-            title_slots.append(sh)
+    """目录页：检测重叠形状组，每组只用面积最大的一个，按视觉位置排序后填入序号和标题。"""
+    all_shapes = list(text_shapes(slide))
+    # 分离数字形状和标题形状
+    num_shapes = [s for s in all_shapes if re.fullmatch(r"0?\d{1,2}", s.text_frame.text.strip())]
+    title_shapes = [s for s in all_shapes if is_placeholder(s.text_frame.text) and "ADD YOUR" not in s.text_frame.text]
+
+    # 对数字形状分组（检测重叠），每组取面积最大的
+    num_groups = _group_overlapping_shapes(num_shapes)
+    num_slots = [max(g, key=lambda s: (s.width or 0) * (s.height or 0)) for g in num_groups]
+    num_slots.sort(key=lambda s: (s.top or 0, s.left or 0))
+
+    # 对标题形状分组（检测重叠），每组取面积最大的
+    title_groups = _group_overlapping_shapes(title_shapes)
+    title_slots = [max(g, key=lambda s: (s.width or 0) * (s.height or 0)) for g in title_groups]
+    title_slots.sort(key=lambda s: (s.top or 0, s.left or 0))
+
+    # 填入标题
     for i, sh in enumerate(title_slots):
         set_text_keep_style(sh, chapters[i] if i < len(chapters) else "")
+    # 填入序号
     for i, sh in enumerate(num_slots):
         set_text_keep_style(sh, f"{i + 1:02d}" if i < len(chapters) else "")
+    # 多余的清空
+    for i in range(len(chapters), len(title_slots)):
+        set_text_keep_style(title_slots[i], "")
+    for i in range(len(chapters), len(num_slots)):
+        set_text_keep_style(num_slots[i], "")
     clear_decor(slide)
     clean_watermarks(slide)
 
@@ -216,18 +258,35 @@ def fill_section(slide, idx, name):
     clean_watermarks(slide)
 
 
-def fill_content(slide, title, bullets):
-    """内容页：选最大的占位块当标题、最大的当内容；内容用 fit_text_to_shape 防溢出。"""
+def fill_content(slide, title, bullets, layout="text_only", extra=None):
+    """内容页：根据 layout 类型填充不同内容。
+
+    layout: text_only / image_center / chart / table
+    extra: 额外数据（图片路径、图表数据、表格数据）
+    """
     clear_decor(slide)
+
+    if layout == "image_center" and extra:
+        _fill_image_slide(slide, title, extra)
+        return
+    if layout == "chart" and extra:
+        _fill_chart_slide(slide, title, extra)
+        return
+    if layout == "table" and extra:
+        _fill_table_slide(slide, title, extra)
+        return
+
+    # 默认：文字内容页
     slots = [sh for sh in text_shapes(slide) if is_placeholder(sh.text_frame.text)]
     if not slots:
         clean_watermarks(slide)
         return
-    # 按面积排序，最大的当内容、次大的当标题
-    slots_by_area = sorted(slots, key=lambda s: (s.width or 0) * (s.height or 0), reverse=True)
-    content_shape = slots_by_area[0]
-    title_shape = slots_by_area[1] if len(slots_by_area) > 1 else slots_by_area[0]
-    # 写标题（短文本，用原始样式即可）
+
+    # 改进：结合位置和内容提示选形状，不再只按面积
+    slide_height = slide.slide_height or 6858000  # 默认高度
+    title_shape, content_shape = _select_title_and_content(slots, slide_height)
+
+    # 写标题
     set_text_keep_style(title_shape, title)
     # 写内容（多条 bullets，用 fit 防溢出）
     full_text = "\n".join(bullets)
@@ -237,6 +296,188 @@ def fill_content(slide, title, bullets):
     for sh in slots:
         if sh not in used:
             set_text_keep_style(sh, "")
+    clean_watermarks(slide)
+
+
+def _select_title_and_content(slots, slide_height):
+    """从候选形状中选出标题和内容框。
+
+    策略：
+    1. 顶部区域（top < 30%）的形状优先作为标题
+    2. 包含标题提示的形状优先作为标题
+    3. 面积最大的非标题形状作为内容
+    """
+    # 标记每个形状的"标题得分"
+    scored = []
+    for s in slots:
+        score = 0
+        top_ratio = (s.top or 0) / slide_height
+        text = s.text_frame.text.lower()
+        # 顶部区域加分
+        if top_ratio < 0.3:
+            score += 10
+        elif top_ratio < 0.5:
+            score += 5
+        # 标题提示加分
+        if any(h in text for h in ["标题", "title", "请输入", "单击此处"]):
+            score += 20
+        # 面积作为基础分（越大越可能是内容框）
+        area = (s.width or 0) * (s.height or 0)
+        score += min(area // 1000000000, 5)  # 限制面积权重
+        scored.append((s, score, area))
+
+    # 按标题得分排序，得分最高的当标题
+    scored.sort(key=lambda x: (-x[1], -x[2]))
+    title_shape = scored[0][0]
+
+    # 剩下的按面积排序，最大的当内容
+    remaining = [(s, area) for s, _, area in scored[1:]]
+    if remaining:
+        remaining.sort(key=lambda x: -x[1])
+        content_shape = remaining[0][0]
+    else:
+        content_shape = title_shape
+
+    return title_shape, content_shape
+
+
+def _fill_image_slide(slide, title, extra):
+    """全幅图片页：标题 + 居中图片 + 说明文字。"""
+    from pptx.util import Inches
+    image_path = extra.get("image", "")
+    caption = extra.get("caption", "")
+
+    # 找一个大的占位形状放图片
+    shapes = list(text_shapes(slide))
+    slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+
+    if slots and image_path:
+        # 最大的形状放图片
+        img_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
+        try:
+            # 在形状位置嵌入图片
+            left = img_slot.left
+            top = img_slot.top
+            width = img_slot.width
+            height = img_slot.height
+            # 清空占位文字
+            set_text_keep_style(img_slot, "")
+            # 嵌入图片
+            slide.shapes.add_picture(image_path, left, top, width, height)
+        except Exception as e:
+            set_text_keep_style(img_slot, f"【图片：{image_path}】{caption}")
+
+    # 填标题
+    title_shapes = [sh for sh in shapes if sh != img_slot if sh in slots]
+    if title_shapes:
+        set_text_keep_style(title_shapes[0], title)
+
+    # 填说明文字
+    if caption:
+        remaining = [sh for sh in slots if sh not in (img_slot, title_shapes[0] if title_shapes else None)]
+        if remaining:
+            set_text_keep_style(remaining[0], caption)
+
+    clear_decor(slide)
+    clean_watermarks(slide)
+
+
+def _fill_chart_slide(slide, title, extra):
+    """全幅图表页：用 python-pptx 的 add_chart 嵌入图表。"""
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+
+    chart_type_str = extra.get("chart_type", "bar")
+    chart_data = extra.get("chart_data", {})
+    categories = chart_data.get("categories", [])
+    values = chart_data.get("values", [])
+
+    if not categories or not values:
+        # 数据不足，降级为文字
+        fill_content(slide, title, [f"【图表数据缺失】{chart_type_str}: {categories}"], "text_only")
+        return
+
+    # 构建图表数据
+    data = CategoryChartData()
+    data.categories = categories
+    data.add_series("数据", values)
+
+    # 图表类型映射
+    chart_types = {
+        "bar": XL_CHART_TYPE.COLUMN_CLUSTERED,
+        "line": XL_CHART_TYPE.LINE,
+        "pie": XL_CHART_TYPE.PIE,
+        "bar_h": XL_CHART_TYPE.BAR_CLUSTERED,
+    }
+    ct = chart_types.get(chart_type_str, XL_CHART_TYPE.COLUMN_CLUSTERED)
+
+    # 找一个大的形状位置放图表
+    shapes = list(text_shapes(slide))
+    slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+
+    if slots:
+        chart_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
+        left = chart_slot.left
+        top = chart_slot.top
+        width = chart_slot.width
+        height = chart_slot.height
+        set_text_keep_style(chart_slot, "")
+        slide.shapes.add_chart(ct, left, top, width, height, data)
+
+    # 填标题
+    title_shapes = [sh for sh in shapes if sh != chart_slot if sh in slots]
+    if title_shapes:
+        set_text_keep_style(title_shapes[0], title)
+
+    clear_decor(slide)
+    clean_watermarks(slide)
+
+
+def _fill_table_slide(slide, title, extra):
+    """全幅表格页：嵌入表格。"""
+    from pptx.util import Inches
+
+    table_data = extra.get("table_data", {})
+    headers = table_data.get("headers", [])
+    rows = table_data.get("rows", [])
+
+    if not headers or not rows:
+        fill_content(slide, title, [f"【表格数据缺失】"], "text_only")
+        return
+
+    # 找一个大的形状位置放表格
+    shapes = list(text_shapes(slide))
+    slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+
+    if slots:
+        table_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
+        left = table_slot.left
+        top = table_slot.top
+        width = table_slot.width
+        height = table_slot.height
+        set_text_keep_style(table_slot, "")
+
+        num_rows = len(rows) + 1  # +1 for header
+        num_cols = len(headers)
+        table_shape = slide.shapes.add_table(num_rows, num_cols, left, top, width, height)
+        table = table_shape.table
+
+        # 写表头
+        for j, h in enumerate(headers):
+            cell = table.cell(0, j)
+            cell.text = h
+        # 写数据行
+        for i, row in enumerate(rows):
+            for j, val in enumerate(row):
+                cell = table.cell(i + 1, j)
+                cell.text = str(val)
+
+    # 填标题
+    title_shapes = [sh for sh in shapes if sh != table_slot if sh in slots]
+    if title_shapes:
+        set_text_keep_style(title_shapes[0], title)
+
+    clear_decor(slide)
     clean_watermarks(slide)
 
 
@@ -291,7 +532,10 @@ def duplicate_slide(prs, src_slide, pristine_xml=None):
 
 
 def polish_slides(slides):
-    """统一字体、段间距、清残余装饰，让填完文字的 PPT 视觉一致。"""
+    """统一字体、段间距、清残余装饰，让填完文字的 PPT 视觉一致。
+
+    只处理空字体的 run，不强制覆盖模板已有的字体选择。
+    """
     from pptx.util import Pt
     from pptx.oxml.ns import qn
 
@@ -302,21 +546,22 @@ def polish_slides(slides):
             tf = sh.text_frame
             for para in tf.paragraphs:
                 for run in para.runs:
-                    # 中文统一宋体，西文统一 Calibri
-                    run.font.name = "Calibri"
-                    rpr = run._r.get_or_add_rPr()
-                    rFonts = rpr.find(qn("a:latin"))
-                    if rFonts is None:
-                        from lxml import etree
-                        rFonts = etree.SubElement(rpr, qn("a:latin"))
-                    rFonts.set("typeface", "Calibri")
-                    ea = rpr.find(qn("a:ea"))
-                    if ea is None:
-                        from lxml import etree
-                        ea = etree.SubElement(rpr, qn("a:ea"))
-                    ea.set("typeface", "宋体")
+                    # 只处理没有字体设置的 run（保留模板原有字体）
+                    if run.font.name is None:
+                        run.font.name = "Calibri"
+                        rpr = run._r.get_or_add_rPr()
+                        rFonts = rpr.find(qn("a:latin"))
+                        if rFonts is None:
+                            from lxml import etree
+                            rFonts = etree.SubElement(rpr, qn("a:latin"))
+                        rFonts.set("typeface", "Calibri")
+                        ea = rpr.find(qn("a:ea"))
+                        if ea is None:
+                            from lxml import etree
+                            ea = etree.SubElement(rpr, qn("a:ea"))
+                        ea.set("typeface", "宋体")
 
-                # 段间距：段前 6pt、段后 2pt、行距 1.2 倍
+                # 段间距：段前 6pt、段后 2pt
                 pPr = para._p.get_or_add_pPr()
                 spc_before = pPr.find(qn("a:spcBef"))
                 if spc_before is None:
@@ -325,11 +570,10 @@ def polish_slides(slides):
                 spc_pct = spc_before.find(qn("a:spcPts"))
                 if spc_pct is None:
                     from lxml import etree
-                    # 清掉可能存在的 spcPct
                     for child in list(spc_before):
                         spc_before.remove(child)
                     spc_pct = etree.SubElement(spc_before, qn("a:spcPts"))
-                spc_pct.set("val", str(int(6 * 100)))  # 6pt = 600 百分之一磅
+                spc_pct.set("val", str(int(6 * 100)))  # 6pt
 
                 spc_after = pPr.find(qn("a:spcAft"))
                 if spc_after is None:
@@ -343,7 +587,7 @@ def polish_slides(slides):
                     spc_aft_pts = etree.SubElement(spc_after, qn("a:spcPts"))
                 spc_aft_pts.set("val", str(int(2 * 100)))  # 2pt
 
-    print("  ✓ 已统一字体(宋体+Calibri)和段间距(段前6pt/段后2pt)")
+    print("  ✓ 已统一段间距(段前6pt/段后2pt)，保留模板原有字体")
 
 
 def build(template: Path, content_path: Path, output: Path):
@@ -393,7 +637,12 @@ def build(template: Path, content_path: Path, output: Path):
                 slide = duplicate_slide(prs, base, pristine.get(base.part.partname))
             else:
                 slide = base
-            fill_content(slide, spec.get("title", ""), spec.get("bullets", []))
+            layout = spec.get("layout", "text_only")
+            extra = spec.get("extra", {})
+            if layout != "text_only" and extra:
+                fill_content(slide, spec.get("title", ""), spec.get("bullets", []), layout, extra)
+            else:
+                fill_content(slide, spec.get("title", ""), spec.get("bullets", []))
             order.append(slide)
 
     if thanks_slide is not None:
