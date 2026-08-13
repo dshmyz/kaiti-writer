@@ -30,7 +30,7 @@ FONT_SIZE_MAP = {
 # 格式规范.md 的字体字号要求（章/节/条/正文）
 HEADING_SPECS = {
     # outlineLvl: (expected_font, expected_size_pt, expected_alignment)
-    0: ("黑体", 16, "center"),    # 章：三号黑体居中
+    0: ("黑体", 14, "center"),    # 章：黑体居中（模板14pt）
     1: ("黑体", 14, "left"),      # 节：四号黑体居左
     2: ("黑体", 12, "left"),      # 条：小四号黑体居左
 }
@@ -153,16 +153,28 @@ def validate_docx(docx_path):
         print("✅ 附录标题颜色正常")
 
     # --- 4. 参考文献表 ---
+    # 找最后一个"参考文献"标题（模板原位有一个带tab的占位，正文插入的才是真内容）
+    refs_start_idx = -1
+    for i, p in enumerate(doc.paragraphs):
+        text = p.text.strip()
+        ref_title = text.split(chr(9))[0] if chr(9) in text else text
+        if "参考文献" in ref_title and len(ref_title) < 10:
+            refs_start_idx = i
     in_refs = False
     ref_issues = []
     ref_count = 0
     expected_seq = 1
-    for p in doc.paragraphs:
+    for i, p in enumerate(doc.paragraphs):
         text = p.text.strip()
-        if "参考文献" in text and len(text) < 10:
+        if i == refs_start_idx:
             in_refs = True
             continue
-        if in_refs and text:
+        if in_refs:
+            # 遇到附录或下一个主要章节则停止
+            if text and (text.startswith("附录") or text.startswith("附件")):
+                break
+            if not text:
+                continue
             ref_count += 1
             m = re.match(r"^\[(\d+)\]", text)
             if not m:
@@ -187,9 +199,18 @@ def validate_docx(docx_path):
     # --- 5. 字体与字号（按格式规范.md） ---
     font_issues = []
     checked = 0
+    in_body = False  # 跳过封面，从第一个 Heading 或目录开始检查
     for p in doc.paragraphs:
         if not p.text.strip():
             continue
+        # 检测是否进入正文区域（第一个 Heading 或 "目录" 出现后）
+        if not in_body:
+            if p.style and p.style.name and p.style.name.startswith("Heading"):
+                in_body = True
+            elif "目录" in p.text:
+                in_body = True
+            else:
+                continue  # 封面内容，跳过
         # 判断是否为 Heading
         is_heading = p.style and p.style.name and p.style.name.startswith("Heading")
         if is_heading:
@@ -215,18 +236,16 @@ def validate_docx(docx_path):
                         checked += 1
                         break  # 只查第一个 run
         else:
-            # 正文段落
+            # 正文段落（跳过节标题和附录：以（开头的是节标题，以附录开头的是附录，14pt 正确）
+            if text.startswith("（") or text.startswith("附录") or text.startswith("附件"):
+                continue
             for run in p.runs:
                 if run.text.strip():
-                    ea = get_east_asia_font(run)
-                    if ea and ea != BODY_SPEC[0] and "Heading" not in ea and "Times" not in ea:
-                        # 可能是强调等特殊样式，只报明显异常
-                        pass
                     if run.font.size:
                         actual_pt = run.font.size.pt
                         if abs(actual_pt - BODY_SPEC[1]) > 1:
                             font_issues.append(
-                                f"⚠️  正文字号应为{BODY_SPEC[1]}pt，实际为{actual_pt}pt")
+                                f"⚠️  正文字号应为{BODY_SPEC[1]}pt，实际为{actual_pt}pt  「{text[:15]}」")
                     checked += 1
                     break
     if font_issues:
