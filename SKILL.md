@@ -194,15 +194,15 @@ description: 撰写、审阅、修订北京航空航天大学（北航）研究�
    python "$SKILL/scripts/make_route_figure.py" --content route.json --output 路线图.png
    ```
    生成后，在 content.json 的「研究思路」节用 image 块引用：`{"image": "路线图.png", "caption": "本研究技术路线图"}`。**这一步必须在写 content.json 之前完成**，否则图片路径不存在。若用户不需要路线图（如纯政策分析型无技术路线），跳过此步。
-6. **生成 .docx**：把内容写成 `content.json`，用内置脚本基于官方模板生成。**完整格式说明、混排块写法、脚本行为、编码护栏、参考文献核查流程见 `references/docx生成规范.md`**。核心命令：
+6. **生成 .docx**：把内容写成 `content.json`，用一站式脚本生成 + 校验。**完整格式说明、混排块写法、脚本行为、编码护栏见 `references/docx生成规范.md`**。核心命令：
    ```bash
-   python "$SKILL/scripts/build_from_template.py" \
+   python "$SKILL/scripts/build_and_validate.py" \
      --template "$SKILL/assets/templates/开题报告模板.docx" \
      --content content.json \
      --output "开题报告-<题目>.docx"
    ```
-   改稿加 `--diff "旧版路径.docx"`；缺项标注加 `--mark-missing "6:发文字号待补"`；清噪声红加 `--clear-noise-red`。依赖 `lxml`（缺则报错提示 `pip install lxml`）。
-   > **生成后规范检查**：build 完成后，按 `references/docx生成规范.md`「生成后规范检查」逐条核对（outlineLvl 层级、盘古空格、附录颜色、参考文献表、字体字号、页面设置）。能自动修正的当场修正并重新保存，无法自动修正的（如参考文献缺项）列出清单提示用户。
+   改稿加 `--diff "旧版路径.docx"`。依赖 `lxml`（缺则报错提示 `pip install lxml`）。
+   > **一站式流程**：build_and_validate.py 内部串联三步——① build_from_template.py 生成 .docx → ② fix_refs.py 参考文献收尾核查（自动修正编号/年份/作者）→ ③ 规范检查（outlineLvl 层级、盘古空格、附录颜色、参考文献表、字体字号、页面设置，能自动修正的当场修正）。跳过某步加 `--skip-fix-refs` 或 `--skip-validate`。缺项标注和清噪声红仍用 fix_refs.py 单独跑。
 7. **自查并回显结果**：按 `references/自查清单.md`（7 项必备 + 逐节质量闸 + 篇幅 + 格式 + 评审标准 + 查重提示）逐条核对，可对照 `templates/范例-问题研究型.md`。**核对完成后，把自查结果直接输出给用户看**（markdown 呈现，不只在内部自评、也不仅一句"已自查"）：
    - 逐条列出每项的「✅ 通过 / ⚠️ 需改（原因）」；
    - 结尾给出一行**结论**：「✅ 全部通过，可交付」或「⚠️ 存在 N 项需修改，清单如下」；
