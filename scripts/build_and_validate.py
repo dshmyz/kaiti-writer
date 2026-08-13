@@ -276,6 +276,25 @@ def validate_docx(docx_path):
                   f"左{left/mm:.0f}mm 右{right/mm:.0f}mm（应为各 25mm）")
         break  # 只检查第一节
 
+    # --- 7. 页码字号（五号宋体 10.5pt） ---
+    page_num_issues = []
+    for section in doc.sections:
+        footer = section.footer
+        if footer:
+            for p in footer.paragraphs:
+                for run in p.runs:
+                    if run.text.strip():
+                        if run.font.size and abs(run.font.size.pt - 10.5) > 0.5:
+                            page_num_issues.append(
+                                f"⚠️  页码字号应为10.5pt，实际为{run.font.size.pt}pt")
+                        break
+        break  # 只检查第一节
+    if page_num_issues:
+        for i in page_num_issues:
+            print(i)
+    else:
+        print("✅ 页码字号符合要求")
+
     # --- 保存修正 ---
     if fixed:
         doc.save(docx_path)
