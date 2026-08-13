@@ -15,6 +15,29 @@ import sys
 import subprocess
 
 
+# 字号 → pt 映射
+FONT_SIZE_MAP = {
+    "初号": 42, "小初": 36,
+    "一号": 26, "小一": 24,
+    "二号": 22, "小二": 18,
+    "三号": 16, "小三": 15,
+    "四号": 14, "小四": 12,
+    "五号": 10.5, "小五": 9,
+    "六号": 7.5, "小六": 6.5,
+    "七号": 5.5, "八号": 5,
+}
+
+# 格式规范.md 的字体字号要求（章/节/条/正文）
+HEADING_SPECS = {
+    # outlineLvl: (expected_font, expected_size_pt, expected_alignment)
+    0: ("黑体", 16, "center"),    # 章：三号黑体居中
+    1: ("黑体", 14, "left"),      # 节：四号黑体居左
+    2: ("黑体", 12, "left"),      # 条：小四号黑体居左
+}
+BODY_SPEC = ("宋体", 12)  # 正文：小四号宋体
+PAGE_NUM_SPEC = ("宋体", 10.5)  # 页码：五号宋体
+
+
 def run_step(name, cmd):
     """运行一个步骤，成功返回 True，失败返回 False。"""
     print(f"\n{'='*50}")
@@ -31,11 +54,24 @@ def run_step(name, cmd):
     return True
 
 
+def get_east_asia_font(run):
+    """从 run 的 rPr 中提取东亚字体名（rFonts 的 eastAsia 属性）。"""
+    from docx.oxml.ns import qn
+    rPr = run._element.find(qn("w:rPr"))
+    if rPr is None:
+        return None
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        return None
+    return rFonts.get(qn("w:eastAsia"))
+
+
 def validate_docx(docx_path):
     """规范检查：outlineLvl/盘古空格/附录颜色/参考文献表/字体字号/页面设置。"""
     try:
         from docx import Document
         from docx.oxml.ns import qn
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
     except ImportError:
         print("⚠️  未安装 python-docx，跳过规范检查（pip install python-docx）")
         return True
@@ -49,7 +85,8 @@ def validate_docx(docx_path):
     fixed = 0
 
     # --- 1. outlineLvl ---
-    headings = [p for p in doc.paragraphs if p.style and p.style.name and p.style.name.startswith("Heading")]
+    headings = [p for p in doc.paragraphs
+                if p.style and p.style.name and p.style.name.startswith("Heading")]
     for p in headings:
         pPr = p._element.find(qn("w:pPr"))
         if pPr is None:
@@ -57,8 +94,6 @@ def validate_docx(docx_path):
         outline = pPr.find(qn("w:outlineLvl"))
         if outline is not None:
             val = int(outline.get(qn("w:val")))
-            # 不做自动修正，只报告
-            # 章=0 节=1 条=2，超出范围才报
             if val > 2:
                 issues.append(f"⚠️  大纲层级异常：「{p.text[:20]}」outlineLvl={val}")
     if not any("outlineLvl" in i for i in issues):
@@ -79,6 +114,19 @@ def validate_docx(docx_path):
                 if t != original:
                     run.text = t
                     cjk_space_count += 1
+    # 表格也要检查
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    for run in p.runs:
+                        if run.text:
+                            original = run.text
+                            t = re.sub(r"([一-鿿])\s+([A-Za-z0-9(（])", r"\1\2", run.text)
+                            t = re.sub(r"([A-Za-z0-9)%）])\s+([一-鿿])", r"\1\2", t)
+                            if t != original:
+                                run.text = t
+                                cjk_space_count += 1
     if cjk_space_count:
         print(f"⚠️  发现 {cjk_space_count} 处盘古空格，已自动修正")
         fixed += cjk_space_count
@@ -108,6 +156,7 @@ def validate_docx(docx_path):
     in_refs = False
     ref_issues = []
     ref_count = 0
+    expected_seq = 1
     for p in doc.paragraphs:
         text = p.text.strip()
         if "参考文献" in text and len(text) < 10:
@@ -115,47 +164,97 @@ def validate_docx(docx_path):
             continue
         if in_refs and text:
             ref_count += 1
-            # 检查序号
             m = re.match(r"^\[(\d+)\]", text)
             if not m:
-                ref_issues.append(f"⚠️  参考文献第 {ref_count} 条缺少序号标记")
-            # 检查末尾结束符
-            if not text.endswith(".") and not text.endswith("．") and not text.endswith("。"):
-                ref_issues.append(f"⚠️  参考文献第 {ref_count} 条缺少结束符（末尾应有 .）")
+                ref_issues.append(f"⚠️  第 {ref_count} 条缺少 [序号] 标记")
+            else:
+                seq = int(m.group(1))
+                if seq != expected_seq:
+                    ref_issues.append(f"⚠️  序号不连续：期望 [{expected_seq}] 实际 [{seq}]")
+                expected_seq = seq + 1
+            if not text.endswith(".") and not text.endswith("．"):
+                ref_issues.append(f"⚠️  第 {ref_count} 条缺少结束符（末尾应有 .）")
     if ref_count == 0:
         print("⚠️  未找到参考文献表")
     elif ref_issues:
-        for i in ref_issues[:5]:  # 最多显示5条
+        for i in ref_issues[:5]:
             print(i)
         if len(ref_issues) > 5:
             print(f"  ...共 {len(ref_issues)} 条问题")
     else:
         print(f"✅ 参考文献表格式正常（共 {ref_count} 条）")
 
-    # --- 5. 字体与字号 ---
+    # --- 5. 字体与字号（按格式规范.md） ---
     font_issues = []
+    checked = 0
     for p in doc.paragraphs:
-        if p.text.strip():
+        if not p.text.strip():
+            continue
+        # 判断是否为 Heading
+        is_heading = p.style and p.style.name and p.style.name.startswith("Heading")
+        if is_heading:
+            pPr = p._element.find(qn("w:pPr"))
+            outline_val = None
+            if pPr is not None:
+                outline = pPr.find(qn("w:outlineLvl"))
+                if outline is not None:
+                    outline_val = int(outline.get(qn("w:val")))
+            if outline_val in HEADING_SPECS:
+                expected_font, expected_size, expected_align = HEADING_SPECS[outline_val]
+                for run in p.runs:
+                    if run.text.strip():
+                        ea = get_east_asia_font(run)
+                        if ea and ea != expected_font and "Heading" not in ea:
+                            font_issues.append(
+                                f"⚠️  「{p.text[:15]}」字体应为{expected_font}，实际为{ea}")
+                        if run.font.size:
+                            actual_pt = run.font.size.pt
+                            if abs(actual_pt - expected_size) > 0.5:
+                                font_issues.append(
+                                    f"⚠️  「{p.text[:15]}」字号应为{expected_size}pt，实际为{actual_pt}pt")
+                        checked += 1
+                        break  # 只查第一个 run
+        else:
+            # 正文段落
             for run in p.runs:
-                if run.font.size and run.font.size.pt not in (12, 14, 16, 18, 22):
-                    # 小四=12pt, 四号=14pt, 三号=16pt, 小三=15pt, 二号=22pt, 小二=18pt
-                    # 这些都是常见字号，超出范围才报
-                    pass
-    print("✅ 字体字号符合要求（详细检查需人工复核）")
+                if run.text.strip():
+                    ea = get_east_asia_font(run)
+                    if ea and ea != BODY_SPEC[0] and "Heading" not in ea and "Times" not in ea:
+                        # 可能是强调等特殊样式，只报明显异常
+                        pass
+                    if run.font.size:
+                        actual_pt = run.font.size.pt
+                        if abs(actual_pt - BODY_SPEC[1]) > 1:
+                            font_issues.append(
+                                f"⚠️  正文字号应为{BODY_SPEC[1]}pt，实际为{actual_pt}pt")
+                    checked += 1
+                    break
+    if font_issues:
+        for i in font_issues[:5]:
+            print(i)
+        if len(font_issues) > 5:
+            print(f"  ...共 {len(font_issues)} 条问题")
+    else:
+        print(f"✅ 字体字号符合要求（检查了 {checked} 个段落）")
 
-    # --- 6. 页面设置 ---
+    # --- 6. 页面设置（格式规范.md：上下左右各 25mm） ---
     for section in doc.sections:
         top = section.top_margin
         bottom = section.bottom_margin
         left = section.left_margin
         right = section.right_margin
-        # 允许 ±0.1cm 误差
-        cm = 914400 / 2.54  # 1cm = 914400/2.54 EMUs
-        if (abs(top - 2.54*cm) > 0.1*cm or abs(bottom - 2.54*cm) > 0.1*cm or
-            abs(left - 3.0*cm) > 0.1*cm or abs(right - 2.54*cm) > 0.1*cm):
-            print(f"⚠️  页边距：上{top/cm:.1f}cm 下{bottom/cm:.1f}cm 左{left/cm:.1f}cm 右{right/cm:.1f}cm（应为上2.5 下2.5 左3.0 右2.5）")
+        mm = 914400 / 25.4  # 1mm = 914400/25.4 EMUs
+        tolerance = 1 * mm  # ±1mm 误差
+        expected = 25 * mm
+        ok = True
+        for name, val in [("上", top), ("下", bottom), ("左", left), ("右", right)]:
+            if abs(val - expected) > tolerance:
+                ok = False
+        if ok:
+            print("✅ 页面设置符合要求（上下左右各 25mm）")
         else:
-            print("✅ 页面设置符合要求")
+            print(f"⚠️  页边距：上{top/mm:.0f}mm 下{bottom/mm:.0f}mm "
+                  f"左{left/mm:.0f}mm 右{right/mm:.0f}mm（应为各 25mm）")
         break  # 只检查第一节
 
     # --- 保存修正 ---
@@ -165,7 +264,9 @@ def validate_docx(docx_path):
     else:
         print("\n✅ 无需修正")
 
-    return len(issues) == 0 and len(ref_issues) == 0
+    if issues or font_issues or ref_issues:
+        return False
+    return True
 
 
 def main():
@@ -175,6 +276,12 @@ def main():
     parser.add_argument("--content", required=True, help="content.json 路径")
     parser.add_argument("--output", required=True, help="输出 .docx 路径")
     parser.add_argument("--diff", default=None, help="改稿时传入旧版 .docx 路径")
+    parser.add_argument("--mark-missing", default=None,
+                        help="给参考文献缺项条目加红色提示（序号:提示文案，分号分隔）")
+    parser.add_argument("--unmark-red", action="store_true",
+                        help="定稿：清除参考文献区所有红色待补提示")
+    parser.add_argument("--clear-noise-red", action="store_true",
+                        help="清全文档非确认红（正文/目录/附录），只保留含〈待确认〉标记的红")
     parser.add_argument("--skip-fix-refs", action="store_true", help="跳过 fix_refs 步骤")
     parser.add_argument("--skip-validate", action="store_true", help="跳过规范检查步骤")
     args = parser.parse_args()
@@ -200,7 +307,26 @@ def main():
                    "--content", args.content,
                    "--docx", args.output]
         if not run_step("Step 2: 参考文献收尾核查", fix_cmd):
-            print("⚠️  fix_refs 出错，继续执行规范检查...")
+            print("⚠️  fix_refs 出错，继续执行...")
+
+    # === Step 2.5: 标红/清红（fix_refs 的交互模式） ===
+    if args.mark_missing:
+        fix_cmd = [sys.executable, fix_script,
+                   "--docx", args.output,
+                   "--mark-missing", args.mark_missing]
+        run_step("Step 2.5: 参考文献缺项标红", fix_cmd)
+
+    if args.unmark_red:
+        fix_cmd = [sys.executable, fix_script,
+                   "--docx", args.output,
+                   "--unmark-red"]
+        run_step("Step 2.5: 清除参考文献区红色提示", fix_cmd)
+
+    if args.clear_noise_red:
+        fix_cmd = [sys.executable, fix_script,
+                   "--docx", args.output,
+                   "--clear-noise-red"]
+        run_step("Step 2.5: 清除全文档噪声红", fix_cmd)
 
     # === Step 3: 规范检查 ===
     if not args.skip_validate:
