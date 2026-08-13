@@ -102,6 +102,73 @@ def insert_after(body, ref, new_el):
     """把 new_el 插到 ref 之后（lxml 原生 addnext）。"""
     ref.addnext(new_el)
 
+def insert_before(body, ref, new_el):
+    """把 new_el 插到 ref 之前（lxml 原生 addprevious）。"""
+    ref.addprevious(new_el)
+
+def _zero_spacing(el):
+    """把 p 的 spacing 设为 before/after/line 全 0, 不删元素."""
+    ppr = el.find(q("pPr"))
+    if ppr is None:
+        ppr = ET.SubElement(el, q("pPr"))
+    sp = ppr.find(q("spacing"))
+    if sp is None:
+        sp = ET.SubElement(ppr, q("spacing"))
+    sp.set(q("before"), "0")
+    sp.set(q("after"), "0")
+    sp.set(q("line"), "0")
+    # 删 beforeLines / afterLines (段间距行数单位)
+    for attr in ("beforeLines", "afterLines"):
+        if sp.get(q(attr)) is not None:
+            del sp.attrib[q(attr)]
+
+def _make_toc_entry(anchor, title, page):
+    """从 anchor (模板已有 TOC 条目) clone 整段, 替换文字和页码, 保留 tab + 格式."""
+    item = deepcopy(anchor)
+    runs = item.findall(q("r"))
+    if not runs:
+        return item
+    # 收集第一个 run 的 rPr 作为格式模板
+    rpr_tmpl = None
+    for r in runs:
+        rp = r.find(q("rPr"))
+        if rp is not None:
+            rpr_tmpl = deepcopy(rp)
+            break
+    # 删除原有 runs, 然后重新创建: 文字 run + tab run + 页码 run
+    for r in list(runs):
+        item.remove(r)
+    _w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    # run 1: 标题文字
+    r1 = ET.Element(q("r"))
+    if rpr_tmpl is not None:
+        r1.append(deepcopy(rpr_tmpl))
+    t1 = ET.SubElement(r1, q("t"))
+    t1.text = title
+    t1.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    item.append(r1)
+    # run 2: tab 字符
+    r2 = ET.Element(q("r"))
+    if rpr_tmpl is not None:
+        r2.append(deepcopy(rpr_tmpl))
+    ET.SubElement(r2, q("tab"))
+    item.append(r2)
+    # run 3: 页码（强制宋体，与模板原始目录条目页码格式一致）
+    r3 = ET.Element(q("r"))
+    r3_rpr = deepcopy(rpr_tmpl) if rpr_tmpl is not None else ET.Element(q("rPr"))
+    rf3 = r3_rpr.find(q("rFonts"))
+    if rf3 is None:
+        rf3 = ET.SubElement(r3_rpr, q("rFonts"))
+    rf3.set(q("ascii"), "宋体")
+    rf3.set(q("hAnsi"), "宋体")
+    rf3.set(q("eastAsia"), "宋体")
+    r3.append(r3_rpr)
+    t3 = ET.SubElement(r3, q("t"))
+    t3.text = str(page)
+    t3.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    item.append(r3)
+    return item
+
 def set_run_text(p, text, *, eastasia="宋体", ascii_font="Times New Roman",
                  sz_halfpt=None, bold=None):
     """清空 p 的 runs，新建一个 run，复用 p 原 rPr 或新建，按参数覆盖字体字号。"""
@@ -191,6 +258,59 @@ def set_spacing(p, *, line=None, before_lines=None, after_lines=None):
     return p
 
 
+def set_heading_font(p, *, ea="黑体", sz_halfpt=28):
+    """设置标题段落所有 run 的 eastAsia 字体和字号（半磅）。同时写段落级 rPr。"""
+    # 段落级 rPr
+    pPr = p.find(q("pPr"))
+    if pPr is None:
+        pPr = ET.Element(q("pPr")); p.insert(0, pPr)
+    pp_rpr = pPr.find(q("rPr"))
+    if pp_rpr is None:
+        pp_rpr = ET.SubElement(pPr, q("rPr"))
+    _set_font_rpr(pp_rpr, ea=ea, sz_halfpt=sz_halfpt)
+    # run 级 rPr
+    for r in p.findall(q("r")):
+        rrpr = r.find(q("rPr"))
+        if rrpr is None:
+            rrpr = ET.SubElement(r, q("rPr"))
+        _set_font_rpr(rrpr, ea=ea, sz_halfpt=sz_halfpt)
+
+
+def _set_font_rpr(rpr, *, ea=None, sz_halfpt=None):
+    """在 rPr 元素上设置 rFonts.eastAsia 和 sz/szCs。"""
+    if ea is not None:
+        rf = rpr.find(q("rFonts"))
+        if rf is None:
+            rf = ET.Element(q("rFonts"))
+            rpr.insert(0, rf)
+        rf.set(q("eastAsia"), ea)
+    if sz_halfpt is not None:
+        for stag in (q("sz"), q("szCs")):
+            el = rpr.find(stag)
+            if el is None:
+                el = ET.SubElement(rpr, stag)
+            el.set(q("val"), str(sz_halfpt))
+
+
+def set_ref_indent(p):
+    """参考文献条目悬挂缩进：序号 [1] 顶格，续行缩进约 0.8cm (454 twips)。"""
+    pPr = p.find(q("pPr"))
+    if pPr is None:
+        pPr = ET.Element(q("pPr")); p.insert(0, pPr)
+    ind = pPr.find(q("ind"))
+    if ind is None:
+        ind = ET.Element(q("ind"))
+        # 插到 spacing 之后、jc/rPr 之前
+        anchor = next((e for e in pPr if e.tag in (q("jc"), q("rPr"))), None)
+        if anchor is not None:
+            anchor.addprevious(ind)
+        else:
+            pPr.append(ind)
+    # 悬挂缩进: left=454twips, hanging=454twips → 首行在左边界, 续行右移
+    ind.set(q("left"), "454")
+    ind.set(q("hanging"), "454")
+
+
 def sort_citation_numbers(text: str) -> str:
     """把正文中的 [17, 16] 排序为 [16, 17]；单个 [n] 不动。
 
@@ -206,16 +326,30 @@ def sort_citation_numbers(text: str) -> str:
     return _re.sub(r"\[(\d+(?:\s*,\s*\d+\s*)+)\]", _sort, text)
 
 
+def strip_cjk_spaces(text):
+    """去除盘古空格：中文与半角字符（字母/数字/符号）之间的多余空格（正式论文不加）。
+
+    保留英文单词之间的正常空格（如 "Open Source"），只清中英/中数交界处。
+    半角侧用 [^\\s一-鿿] 匹配所有非空白非中文字符，覆盖 %、+、$ 等符号。
+    """
+    import re as _re
+    text = _re.sub(r"([一-鿿])\s+([^\s一-鿿])", r"\1\2", text)
+    text = _re.sub(r"([^\s一-鿿])\s+([一-鿿])", r"\1\2", text)
+    return text
+
+
 def clone_body_para(template_body_p, text):
     """深拷贝正文模板段（保留 pPr 缩进/段落样式），注入正文 run，并强制规范行距。
 
     正文：1.5 倍行距（line=360）、段前段后 0 行（格式规范 1.2）。deepcopy 继承的
     模板 before/after 与行距一律以这里显式设置的为准，避免把示例段旧值带进全文。
+    同时清理盘古空格（中英文/数字之间的多余空格）。
     """
     p = deepcopy(template_body_p)
     for r in list(p.findall(q("r"))): p.remove(r)
     set_spacing(p, line=360, before_lines=0, after_lines=0)
-    set_run_text(p, sort_citation_numbers(text), eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
+    set_run_text(p, sort_citation_numbers(strip_cjk_spaces(text)),
+                 eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
     return p
 
 def make_heading_para(text, heading_tpl):
@@ -224,6 +358,7 @@ def make_heading_para(text, heading_tpl):
     字体字号一律沿用样板段自己的 rPr：模板一~四章的 run 实测都是 sz=24、
     rFonts 只有 hint=eastAsia、不加粗。写死宋体/四号/加粗会让新建的「五、」
     和其他章长得不一样，所以这里先取样板 run 的 rPr 再清 run。
+    默认设 outlineLvl=1（节标题），章标题由调用方覆盖为 0。
     """
     p = deepcopy(heading_tpl)
     rpr = first_run_rpr(p)
@@ -231,6 +366,8 @@ def make_heading_para(text, heading_tpl):
     for r in list(p.findall(q("r"))): p.remove(r)
     # 章/节/条标题：单倍行距（line=240），段前、段后各 0.5 行（格式规范 1.2）
     set_spacing(p, line=240, before_lines=50, after_lines=50)
+    set_outline(p, 1)  # 默认节标题；章标题由 ensure_section 覆盖为 0
+    set_heading_font(p, ea="黑体", sz_halfpt=28)
     run = ET.SubElement(p, q("r"))
     if rpr is not None:
         run.append(rpr)
@@ -255,6 +392,7 @@ def ensure_section(body, title, before_needle, body_start, heading_tpl):
     if ref is None:
         return None
     hp = make_heading_para(title, heading_tpl)
+    set_outline(hp, 0)  # 章标题（level=0），覆盖 make_heading_para 的默认值
     ref.addprevious(hp)
     return hp
 
@@ -279,7 +417,7 @@ def make_caption(text, kind, num, *, body_tpl=None):
     jc = ET.SubElement(pPr, q("jc")); jc.set(q("val"), "center")
     if (rpr := pPr.find(q("rPr"))) is not None:
         pPr.remove(jc); rpr.addprevious(jc)
-    set_run_text(p, f"{kind}{num}  {text}", eastasia="宋体",
+    set_run_text(p, f"{kind}{num}  {strip_cjk_spaces(text)}", eastasia="宋体",
                  ascii_font="Times New Roman", sz_halfpt=SZ_FIVE, bold=True)
     return p
 
@@ -391,7 +529,7 @@ def make_list_para(text, num_id, *, body_tpl=None, ilvl=0):
     ind.set(q("left"), str(420 + 420 * ilvl)); ind.set(q("firstLine"), "0")
     if rpr is not None:
         rpr.addprevious(ind)
-    set_run_text(p, text, eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
+    set_run_text(p, strip_cjk_spaces(text), eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
     return p
 
 
@@ -490,7 +628,7 @@ def make_three_line_table(headers, rows, content_width=8306):
         t = ET.SubElement(r, q("t"))
         if text[:1].isspace() or text[-1:].isspace():
             t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        t.text = text
+        t.text = strip_cjk_spaces(text)
         return tc
     hr = ET.SubElement(tbl, q("tr"))
     for h in headers: hr.append(cell(h, bold=True, bottom=True))
@@ -544,7 +682,7 @@ def scrub_docprops(entries: dict, author: str = "") -> list:
     return changed
 
 def build(template: Path, content_path: Path, output: Path):
-    import hashlib
+    import hashlib, re
     data = json.loads(content_path.read_text(encoding="utf-8"))
     # 模板版本跟踪：打印模板文件的 MD5 前 8 位，方便排查"生成结果和上次不一样"
     tpl_hash = hashlib.md5(template.read_bytes()).hexdigest()[:8]
@@ -695,6 +833,11 @@ def build(template: Path, content_path: Path, output: Path):
 
     for sec_title, blocks in data.get("content_by_section", {}).items():
         hp = find_para_after(body, sec_title, body_start) if body_start is not None else None
+        if hp is not None:
+            # 章标题（一~十、开头）已在 8.5 设为 L0，节标题才标 L1
+            from re import match as _re_match
+            if not _re_match(r"^(一|二|三|四|五|六|七|八|九|十)、", sec_title):
+                set_outline(hp, 1)
         if hp is None and sec_title in CREATABLE_SECTIONS:
             hp = ensure_section(body, sec_title, CREATABLE_SECTIONS[sec_title],
                                 body_start, heading_tpl)
@@ -744,7 +887,9 @@ def build(template: Path, content_path: Path, output: Path):
                         if text_of(p).strip().startswith("［")]
     for i, p in enumerate(ref_placeholders):
         if i < len(refs):
-            set_run_text(p, refs[i], eastasia="宋体", ascii_font="Times New Roman")
+            set_run_text(p, refs[i], eastasia="宋体", ascii_font="Times New Roman",
+                         sz_halfpt=24)
+            set_ref_indent(p)  # 悬挂缩进
         else:
             body.remove(p)
     # 若 refs 多于占位条数，在最后一个占位后追加
@@ -752,6 +897,7 @@ def build(template: Path, content_path: Path, output: Path):
         anchor = ref_placeholders[-1]
         for txt in refs[len(ref_placeholders):]:
             new_p = clone_body_para(ref_placeholders[-1], txt)
+            set_ref_indent(new_p)
             insert_after(body, anchor, new_p); anchor = new_p
 
     # ---- 8. 附录 ----
@@ -773,6 +919,8 @@ def build(template: Path, content_path: Path, output: Path):
     # 同时给章/节/条标题设 outlineLvl（章0 / 节1 / 条2）：模板的节/条/参考文献/附录标题
     # 都没挂标题样式，TOC 域 (TOC \o "1-4") 只按大纲级别/标题样式收录——不加的话，
     # 用户一刷新目录域(F9)，节/条/附录/参考文献就会从目录里消失，只剩章标题。
+    #
+    # 逻辑：代码创建的标题已在创建时打好 outlineLvl，这里只补模板自带的未标记标题。
     if body_start is not None:
         from re import compile as _re
         _ZHANG = _re(r"^(一|二|三|四|五|六|七|八|九|十)、")
@@ -788,15 +936,33 @@ def build(template: Path, content_path: Path, output: Path):
                 end_idx = list(body).index(a); break
         for p in paras_[start_idx:end_idx]:
             t = text_of(p).strip()
+            pPr = p.find(q("pPr"))
+            ol = pPr.find(q("outlineLvl")) if pPr is not None else None
+            # 已有 outlineLvl → 代码创建的标题，归一化格式（spacing/heading_font 可能漏设）
+            if ol is not None:
+                lvl = int(ol.get(q("val"), "1"))
+                set_spacing(p, line=240, before_lines=50, after_lines=50)
+                if lvl <= 1:
+                    set_heading_font(p, ea="黑体", sz_halfpt=28)
+                else:
+                    set_heading_font(p, ea="黑体", sz_halfpt=24)
+                continue
+            # 模板自带标题：按文本模式匹配并补 outlineLvl + 格式
             if _ZHANG.match(t):
                 set_outline(p, 0)
                 set_spacing(p, line=240, before_lines=50, after_lines=50)
+                set_heading_font(p, ea="黑体", sz_halfpt=28)  # 三号黑体
             elif _JIE.match(t):
                 set_outline(p, 1)
                 set_spacing(p, line=240, before_lines=50, after_lines=50)
+                set_heading_font(p, ea="黑体", sz_halfpt=28)  # 四号黑体
             elif _TIAO.match(t):
-                # 条标题：只规范行距（单倍+0.5行），不进目录（粒度到节级）
-                set_spacing(p, line=240, before_lines=50, after_lines=50)
+                # 条标题：短段（<30字）才按标题行距处理；长段是带编号的正文内容
+                # （如文献综述中的"1、供应链风险管理研究。……"），保持正文行距。
+                zh_len = sum(1 for c in t if '一' <= c <= '鿿')
+                if zh_len < 30:
+                    set_spacing(p, line=240, before_lines=50, after_lines=50)
+                    set_heading_font(p, ea="黑体", sz_halfpt=24)  # 小四号黑体
 
     # 参考文献 / 附录 标题进目录（一级）；它们标题无 pStyle，若不设 outlineLvl，
     # 模板缓存里手写的目录项一次 F9 刷新就没了。
@@ -816,6 +982,24 @@ def build(template: Path, content_path: Path, output: Path):
                     hp = _p; break
         if hp is not None:
             set_outline(hp, level)
+            set_spacing(hp, line=240, before_lines=50, after_lines=50)
+            clean_title = needle.rstrip("：")
+            runs = hp.findall(q("r"))
+            if runs:
+                _t = runs[0].find(q("t"))
+                if _t is not None:
+                    _t.text = clean_title
+                # 清除 run 上的红色（模板"附录"带 color=FF0000）
+                for r in runs:
+                    rpr = r.find(q("rPr"))
+                    if rpr is not None:
+                        color = rpr.find(q("color"))
+                        if color is not None:
+                            rpr.remove(color)
+                for extra in runs[1:]:
+                    hp.remove(extra)
+            # 统一为三号黑体(28)；参考文献保留模板的粗体
+            set_heading_font(hp, ea="黑体", sz_halfpt=28)
 
     # ---- 9. 删除“书写规范”段及之后全部（含 body-level sectPr），让 idx90 的 sectPr 收尾 ----
     spec_p = find_para(body, "书写规范")
@@ -828,7 +1012,143 @@ def build(template: Path, content_path: Path, output: Path):
         for el in to_remove:
             body.remove(el)
 
-    # ---- 9.5 清理目录区/正文区/文末多余空行，消除“一大堆空白页/很多空行” ----
+    # ---- 估算目录页码 (供 9.0 填入) ----
+    toc_pages = estimate_toc_pages(data, has_cover=True)
+
+    # ---- 9.0 修复模板缓存的 TOC: 清红色、填页码、补缺失条目 ----
+    if body_start is not None:
+        toc_paras = []
+        for el in list(body):
+            if el is body_start:
+                break
+            if el.tag == q("p"):
+                toc_paras.append(el)
+        # (a) 清除目录区所有红色 run
+        for tp in toc_paras:
+            for r in tp.findall(q("r")):
+                rpr = r.find(q("rPr"))
+                if rpr is not None:
+                    color = rpr.find(q("color"))
+                    if color is not None:
+                        val = (color.get(q("val")) or "").lower()
+                        if val in ("ff0000", "red"):
+                            rpr.remove(color)
+        # (a2) 用估算页码更新已有目录条目
+        if toc_pages:
+            # 静态映射: BUAA 模板固定目录条目 → toc_pages 中的 key
+            _STATIC_TOC_MAP = {
+                "一、研究背景与选题意义":    "（一）研究背景",
+                "（一）研究背景":           "（一）研究背景",
+                "（二）选题意义":           "（二）选题意义",
+                "（三）文献综述":           "（三）文献综述",
+                "二、研究思路与框架":        "（一）研究思路",
+                "（一）研究思路":           "（一）研究思路",
+                "（二）研究框架（内容）":      "研究框架（内容）",
+                "（三）论文大纲":           "（三）论文大纲",
+                "三、研究方法与创新之处":      "（一）研究方法",
+                "（一）研究方法":           "（一）研究方法",
+                "（二）创新之处":           "（二）创新之处",
+                "四、学位论文实施计划":       "四、学位论文实施计划",
+                "五、预期目标和成果":        "五、预期目标和成果",
+                "参考文献":               "参考文献",
+                "附录":                 "附录",
+            }
+            _toc_lookup = {}
+            for _tk, _sk in _STATIC_TOC_MAP.items():
+                if _sk in toc_pages:
+                    _toc_lookup[_tk] = toc_pages[_sk]
+            for tp in toc_paras:
+                tp_text = text_of(tp).strip()
+                if not tp_text or tp_text in ("目录",):
+                    continue
+                _tp_title = re.sub(r"\d+\s*$", "", tp_text).strip()
+                _pg = _toc_lookup.get(_tp_title)
+                if _pg is None:
+                    # 处理模板中 "一、 研究背景" 带额外空格的情况
+                    _tp_norm = re.sub(r"\s+", "", _tp_title)
+                    _pg = _toc_lookup.get(_tp_norm)
+                if _pg is None:
+                    continue
+                runs = tp.findall(q("r"))
+                for i, r in enumerate(runs):
+                    if r.find(q("tab")) is not None and i + 1 < len(runs):
+                        pg_run = runs[i + 1]
+                        _t = pg_run.find(q("t"))
+                        if _t is not None:
+                            _t.text = str(_pg)
+                        # 页码统一宋体
+                        _rpr = pg_run.find(q("rPr"))
+                        if _rpr is not None:
+                            _rf = _rpr.find(q("rFonts"))
+                            if _rf is None:
+                                _rf = ET.SubElement(_rpr, q("rFonts"))
+                            _rf.set(q("ascii"), "宋体")
+                            _rf.set(q("hAnsi"), "宋体")
+                            _rf.set(q("eastAsia"), "宋体")
+        # (b) 补缺失条目 -- 五 → 参考文献之前; 附录 → 参考文献之后
+        toc_text_all = " ".join(text_of(tp) for tp in toc_paras)
+        _new_sections = ctx.get("sections_new", []) if ctx else []
+        _appendix_exists = bool(data.get("appendix"))
+        # 找"参考文献"条目作锚点; 找不到则用最后一个非空段
+        _ref_anchor = None
+        for tp in toc_paras:
+            t = text_of(tp).strip()
+            if t.startswith("参考文献"):
+                _ref_anchor = tp
+                break
+        _fallback_anchor = _ref_anchor
+        if _fallback_anchor is None:
+            for tp in reversed(toc_paras):
+                if text_of(tp).strip():
+                    _fallback_anchor = tp
+                    break
+        if _fallback_anchor is not None:
+            # "五、预期目标和成果" → 参考文献之前 (正文章节顺序)
+            if "五、" in " ".join(_new_sections) and "五、" not in toc_text_all:
+                _pg5 = str(toc_pages.get("五、预期目标和成果", " "))
+                _item = _make_toc_entry(_fallback_anchor, "五、预期目标和成果", _pg5)
+                _anchor5 = _ref_anchor if _ref_anchor is not None else _fallback_anchor
+                insert_before(body, _anchor5, _item)
+            # "附录" → 参考文献之后 (附录在参考文献之后是论文规范)
+            if _appendix_exists and "附录" not in toc_text_all.split("参考")[0]:
+                _ref_end = _ref_anchor
+                if _ref_end is not None:
+                    _nxt = _ref_end.getnext()
+                    while _nxt is not None and _nxt.tag == q("p") and text_of(_nxt).strip():
+                        _ref_end = _nxt; _nxt = _nxt.getnext()
+                _pg_ap = str(toc_pages.get("附录", " "))
+                _item = _make_toc_entry(_fallback_anchor, "附录", _pg_ap)
+                _anchor_a = _ref_end if _ref_end is not None else _fallback_anchor
+                insert_after(body, _anchor_a, _item)
+
+    # ---- 9.3 压缩封面区与目录区之间的多余空段 ----
+    # 封面表格后到 sectPr 之间的空段: 清零间距 + 删除, 避免多出一页.
+    for el in list(body):
+        if el.tag == q("tbl"):
+            _tbl = el
+            _sib = _tbl.getnext()
+            _to_remove = []
+            while _sib is not None:
+                if _sib.tag == q("p"):
+                    _ppr = _sib.find(q("pPr"))
+                    _has_sect = _ppr is not None and _ppr.find(q("sectPr")) is not None
+                    if _has_sect:
+                        _zero_spacing(_sib)
+                        break
+                    else:
+                        _t = "".join(x.text or "" for x in _sib.iter(q("t")))
+                        _zero_spacing(_sib)
+                        if not _t.strip():
+                            _to_remove.append(_sib)
+                elif _sib.tag == q("tbl"):
+                    break
+                _sib = _sib.getnext()
+            # 删除封面区多余空段(保留含 sectPr 的段)
+            for rm in _to_remove:
+                body.remove(rm)
+            break
+
+    # ---- 9.5 清理目录区/正文区/文末多余空行，消除”一大堆空白页/很多空行” ----
     # 官方模板的目录区、正文区自带大量空白段（有的行距还特别大，如 line=460 exact），
     # 会在目录页末尾、文末堆出大片空白，看起来像“夹了一页空白/很多空行”。
     # 处理范围：从第一个分节符（sectPr 段）之后的目录区开始，直到文档末尾——
@@ -994,6 +1314,32 @@ def section_char_counts(data):
     return out
 
 
+def estimate_toc_pages(data, has_cover=True):
+    """根据各节中文字数估算目录页码。
+
+    前置页(封面+目录)占 has_cover 页, 正文从第 has_cover+1 页开始;
+    每页约 700 中文字 (小四/1.5倍行距/版心宽14cm).
+    """
+    per_sec = section_char_counts(data)
+    if not per_sec:
+        return {}
+    chars_per_page = 700
+    cumulative = 0
+    start_page = 2 if has_cover else 1
+    pages = {}
+    for name, n in per_sec.items():
+        pages[name] = start_page + cumulative // chars_per_page
+        cumulative += n
+    # 参考文献和附录不计入 section_char_counts, 排在最后
+    total_body_pages = start_page + (cumulative + chars_per_page - 1) // chars_per_page
+    if data.get("refs"):
+        pages["参考文献"] = total_body_pages
+        total_body_pages += max(1, len(data["refs"]) // 10 + 1)
+    if data.get("appendix"):
+        pages["附录"] = total_body_pages
+    return pages
+
+
 def check_refs_format(refs):
     """按 GB/T 7714 著录规则（references/参考文献著录.md）对 refs 逐条做自动化核查。
 
@@ -1085,10 +1431,11 @@ def check_line_spacing(root):
             continue
         ppr = p.find(q("pPr"))
         sp = ppr.find(q("spacing")) if ppr is not None else None
-        line = int(sp.get(q("line"), 0)) if sp is not None else 0
-        bl = int(sp.get(q("beforeLines"), 0)) if sp is not None else 0
-        al = int(sp.get(q("afterLines"), 0)) if sp is not None else 0
-        head = bool(_ZHANG.match(t) or _JIE.match(t) or _TIAO.match(t))
+        line = int(sp.get(q("line"), "240")) if sp is not None else 240
+        bl = int(sp.get(q("beforeLines"), "0")) if sp is not None else 0
+        al = int(sp.get(q("afterLines"), "0")) if sp is not None else 0
+        head = bool(_ZHANG.match(t) or _JIE.match(t)
+                    or (_TIAO.match(t) and sum(1 for c in t if '一' <= c <= '鿿') < 30))
         if head:
             if line != 240 or bl != 50 or al != 50:
                 issues.append((t[:20], f"标题应单倍行距、段前段后各0.5行（实测 line={line or 240} beforeLines={bl} afterLines={al}）"))
@@ -1137,6 +1484,11 @@ def validate(path, data, ctx=None, scrubbed=None):
         print("  各节中文字数（对照 references/篇幅档位.md 看哪节欠字）:")
         for name, n in per_sec.items():
             print(f"    {name}: {n}")
+    _pg_est = estimate_toc_pages(data, has_cover=True)
+    if _pg_est:
+        print("  估算目录页码:")
+        for name, pg in _pg_est.items():
+            print(f"    {name}: p{pg}")
     print(f"  题目已换: {'宏大百货' not in text}")
     cover = data.get("cover", {})
     cover_ok = [k for k, v in cover.items() if v and v in text]
@@ -1187,7 +1539,8 @@ def validate(path, data, ctx=None, scrubbed=None):
         print("  行距: 通过（标题单倍+段前段后各0.5行，正文1.5倍，表图题单倍）")
     ap_items = data.get("appendix") or []
     ap_first = next(iter(flatten_block_text(ap_items[:1])), "") if ap_items else ""
-    print(f"  附录: {bool(ap_items) and bool(ap_first) and ap_first[:15] in text}"
+    # validate 读的是已去盘古空格的 XML，故 ap_first 也要同步去空格再比较
+    print(f"  附录: {bool(ap_items) and bool(ap_first) and strip_cjk_spaces(ap_first[:15]) in text}"
           f"{f'（{len(ap_items)} 块）' if ap_items else ''}")
     print(f"  无模板残留: {not leftover} {'' if not leftover else leftover}")
     if unfilled:
