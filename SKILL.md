@@ -235,6 +235,7 @@ description: 撰写、审阅、修订北京航空航天大学（北航）研究�
 - `templates/内容示例-社区减负.json`（问题研究型，**含表格/插图/列表/脚注四种混排块示例**）、`内容示例-案例分析.json`、`内容示例-调研分析.json`、`内容示例-政策分析.json` — content.json 格式示例（四类各一）
 - `assets/templates/ppt/模板1-北航答辩通用.pptx`、`模板2-…`、`模板3-…` — 三套内置答辩 PPT 模板（16:9，生成 PPT 时让用户选）
 - `scripts/build_ppt_from_template.py` — 基于上述模板生成汇报 PPT（改而不建，自动清水印/占位，支持图表/图片/表格嵌入，生成后自动调 pptx 技能 validate.py 做文件级验证）
+- `scripts/renumber_refs.py` — GB/T 7714 顺序编码制**引用编号校验与重排**（--check 把关 / --fix 自动重排正文+文献表+content.json / 插入新文献用 [99] 占位后 --fix 一步归位）；build_and_validate.py 第 4.5 步每次构建自动检查引用顺序，违规即提示运行本工具
 - `scripts/build_from_template.py` — 基于官方 Word 模板生成开题报告 .docx（支持正文段 + 三线表/插图/自动编号列表/脚注混排，图表题自动编号，可自动新建「五、预期目标和成果」节）
 - `scripts/make_route_figure.py` — 生成技术路线图 PNG（Pillow + 系统宋体，零新增依赖；出图后用 image 块嵌入）
 - `scripts/read_docx.py` — 读已有开题报告 .docx 并按节切分（审阅路径用；只读不改原文件；会报缺失节、缺「预期目标和成果」、以及提了问卷/访谈却无附录）

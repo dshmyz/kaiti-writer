@@ -225,6 +225,29 @@ def validate_docx(docx_path):
     else:
         print(f"✅ 参考文献表格式正常（共 {ref_count} 条）")
 
+    # --- 4.5 引用编号按首次出现顺序（GB/T 7714 顺序编码制） ---
+    # 正文引用标注 [n] 应按首次出现顺序递增：[8] 不得早于 [2] 出现。
+    # 违规时提示运行 scripts/renumber_refs.py --fix 自动重排。
+    cite_order = []
+    seen = set()
+    for i, p in enumerate(doc.paragraphs):
+        if i == refs_start_idx:
+            break  # 只扫正文，不扫参考文献表
+        for m in re.finditer(r"\[(\d+(?:[,，]\s*\d+)*(?:-\d+)?)\]", p.text):
+            for num_str in re.split(r"[,，\-]", m.group(1)):
+                n = int(num_str.strip())
+                if n and n not in seen:
+                    seen.add(n)
+                    cite_order.append(n)
+    out_of_order = [b for a, b in zip(cite_order, cite_order[1:]) if b < a]
+    if not cite_order:
+        print("✅ 正文无引用标注（跳过顺序检查）")
+    elif out_of_order:
+        print(f"⚠️  引用编号未按首次出现顺序：出现顺序 {[min(cite_order), max(cite_order)]} 区间内有乱序 {out_of_order[:5]}")
+        print("    → 运行 python \"$SKILL/scripts/renumber_refs.py\" --fix 自动重排")
+    else:
+        print(f"✅ 引用编号按首次出现顺序合规（1-{max(cite_order)}）")
+
     # --- 5. 字体与字号（按格式规范.md） ---
     font_issues = []
     checked = 0
@@ -265,8 +288,15 @@ def validate_docx(docx_path):
                         checked += 1
                         break  # 只查第一个 run
         else:
-            # 正文段落（跳过节标题和附录：以（开头的是节标题，以附录开头的是附录，14pt 正确）
-            if text.startswith("（") or text.startswith("附录") or text.startswith("附件"):
+            # 正文段落：跳过一切"有 outlineLvl 的标题段"（节标题/参考文献标题，
+            # 14pt 四号）+ 附录标题 + 图表题注（图/表+数字开头，五号）——
+            # 都不是正文的 12pt。注意必须用当前段落的文本，
+            # 不能引用上一个循环残留的变量（陈旧变量 bug 曾让检查只覆盖 5 段）
+            pPr0 = p._element.find(qn("w:pPr"))
+            if pPr0 is not None and pPr0.find(qn("w:outlineLvl")) is not None:
+                continue
+            ptext = p.text.strip()
+            if ptext.startswith(("（", "附录", "附件")) or re.match(r"^[图表]\s*\d+", ptext):
                 continue
             for run in p.runs:
                 if run.text.strip():
@@ -274,7 +304,7 @@ def validate_docx(docx_path):
                         actual_pt = run.font.size.pt
                         if abs(actual_pt - BODY_SPEC[1]) > 1:
                             font_issues.append(
-                                f"⚠️  正文字号应为{BODY_SPEC[1]}pt，实际为{actual_pt}pt  「{text[:15]}」")
+                                f"⚠️  正文字号应为{BODY_SPEC[1]}pt，实际为{actual_pt}pt  「{ptext[:15]}」")
                     checked += 1
                     break
     if font_issues:
