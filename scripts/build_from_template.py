@@ -338,17 +338,20 @@ def strip_cjk_spaces(text):
     return text
 
 
-def clone_body_para(template_body_p, text):
+def clone_body_para(template_body_p, text, *, strip_spaces=True):
     """深拷贝正文模板段（保留 pPr 缩进/段落样式），注入正文 run，并强制规范行距。
 
     正文：1.5 倍行距（line=360）、段前段后 0 行（格式规范 1.2）。deepcopy 继承的
     模板 before/after 与行距一律以这里显式设置的为准，避免把示例段旧值带进全文。
     同时清理盘古空格（中英文/数字之间的多余空格）。
+    strip_spaces=False 供参考文献条目使用：GB/T 7714 要求"半角标点+空格"，
+    strip 会把"张三, 李四"删成"张三,李四"，破坏著录格式。
     """
     p = deepcopy(template_body_p)
     for r in list(p.findall(q("r"))): p.remove(r)
     set_spacing(p, line=360, before_lines=0, after_lines=0)
-    set_run_text(p, sort_citation_numbers(strip_cjk_spaces(text)),
+    t = strip_cjk_spaces(text) if strip_spaces else text
+    set_run_text(p, sort_citation_numbers(t),
                  eastasia="宋体", ascii_font="Times New Roman", sz_halfpt=SZ_BODY)
     return p
 
@@ -896,7 +899,7 @@ def build(template: Path, content_path: Path, output: Path):
     if len(refs) > len(ref_placeholders) and ref_placeholders:
         anchor = ref_placeholders[-1]
         for txt in refs[len(ref_placeholders):]:
-            new_p = clone_body_para(ref_placeholders[-1], txt)
+            new_p = clone_body_para(ref_placeholders[-1], txt, strip_spaces=False)
             set_ref_indent(new_p)
             insert_after(body, anchor, new_p); anchor = new_p
 
