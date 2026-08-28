@@ -104,13 +104,40 @@ def validate_docx(docx_path):
                 print(i)
 
     # --- 2. 盘古空格 ---
+    # 只处理半角空格（" "），不用 \s——\s 会吞目录页码的制表符。
+    # 跳过：标题段（Heading/样式/章标题/附录开头）、图表题注（图/表+数字开头）、
+    #       参考文献条目（[数字]开头）——题注"图1␣␣XXX"的 2 格、
+    #       GB/T 7714 标点后空格都是格式要求，不能动。
+    def strip_halfwidth_cjk_spaces(text):
+        t = re.sub(r"([一-鿿]) +([A-Za-z0-9(（])", r"\1\2", text)
+        t = re.sub(r"([A-Za-z0-9)%）]) +([一-鿿])", r"\1\2", t)
+        return t
+
+    def para_skip_pangu(p):
+        t = p.text.strip()
+        if not t:
+            return True
+        if p.style and p.style.name and p.style.name.startswith("Heading"):
+            return True
+        if pPr := p._element.find(qn("w:pPr")):
+            if pPr.find(qn("w:outlineLvl")) is not None:
+                return True
+        if re.match(r"^(第[一二三四五六七八九十百]+[章节]|[一二三四五六七八九十]+、|附录|附件)", t):
+            return True
+        if re.match(r"^[图表]\s*\d+", t):
+            return True
+        if re.match(r"^\[\d+\]", t):
+            return True
+        return False
+
     cjk_space_count = 0
     for p in doc.paragraphs:
+        if para_skip_pangu(p):
+            continue
         for run in p.runs:
             if run.text:
                 original = run.text
-                t = re.sub(r"([一-鿿])\s+([A-Za-z0-9(（])", r"\1\2", run.text)
-                t = re.sub(r"([A-Za-z0-9)%）])\s+([一-鿿])", r"\1\2", t)
+                t = strip_halfwidth_cjk_spaces(run.text)
                 if t != original:
                     run.text = t
                     cjk_space_count += 1
@@ -119,11 +146,12 @@ def validate_docx(docx_path):
         for row in table.rows:
             for cell in row.cells:
                 for p in cell.paragraphs:
+                    if para_skip_pangu(p):
+                        continue
                     for run in p.runs:
                         if run.text:
                             original = run.text
-                            t = re.sub(r"([一-鿿])\s+([A-Za-z0-9(（])", r"\1\2", run.text)
-                            t = re.sub(r"([A-Za-z0-9)%）])\s+([一-鿿])", r"\1\2", t)
+                            t = strip_halfwidth_cjk_spaces(run.text)
                             if t != original:
                                 run.text = t
                                 cjk_space_count += 1
@@ -184,8 +212,9 @@ def validate_docx(docx_path):
                 if seq != expected_seq:
                     ref_issues.append(f"⚠️  序号不连续：期望 [{expected_seq}] 实际 [{seq}]")
                 expected_seq = seq + 1
-            if not text.endswith(".") and not text.endswith("．"):
-                ref_issues.append(f"⚠️  第 {ref_count} 条缺少结束符（末尾应有 .）")
+            # GB/T 7714：每条末不加结束符（与 fix_refs.py、参考文献著录.md 一致）
+            if text.endswith((".", "．", "。", ";", "；")):
+                ref_issues.append(f"⚠️  第 {ref_count} 条末尾不应有结束符（GB/T 7714）")
     if ref_count == 0:
         print("⚠️  未找到参考文献表")
     elif ref_issues:
