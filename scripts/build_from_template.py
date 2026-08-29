@@ -327,14 +327,28 @@ def sort_citation_numbers(text: str) -> str:
 
 
 def strip_cjk_spaces(text):
-    """去除盘古空格：中文与半角字符（字母/数字/符号）之间的多余空格（正式论文不加）。
+    """去除盘古空格：中文与半角字母/数字之间的单个半角空格（正式论文不加）。
 
-    保留英文单词之间的正常空格（如 "Open Source"），只清中英/中数交界处。
-    半角侧用 [^\\s一-鿿] 匹配所有非空白非中文字符，覆盖 %、+、$ 等符号。
+    保守修正版（v3 原版误伤过参考文献与章节标题，2026-08-29 修）：
+    - 只匹配单个半角空格，不用 \\s+（保护制表符与题注"图1  ××"双空格）；
+    - 半角侧只匹配字母/数字/括号，不匹配标点——保留 GB/T 7714 著录的
+      标点后空格（如 "作者, 作者. 题名"）与"信息安全学报, 2024"；
+    - 先保护 "第X章/节/部分""附录X" 之后的空格（"第三章 A公司""附录A 提纲"
+      是刻意的排版空格），处理完再还原。
     """
     import re as _re
-    text = _re.sub(r"([一-鿿])\s+([^\s一-鿿])", r"\1\2", text)
-    text = _re.sub(r"([^\s一-鿿])\s+([一-鿿])", r"\1\2", text)
+    protected = []
+
+    def _mask(m):
+        protected.append(m.group(0))
+        return "\x00%d\x00 " % (len(protected) - 1)
+
+    text = _re.sub(
+        r"(第[一二三四五六七八九十百\d]+[章节部分]|附录[A-Za-z\d一-鿿]) (?=[A-Za-z0-9一-鿿])",
+        _mask, text)
+    text = _re.sub(r"([一-鿿]) ([A-Za-z0-9(（])", r"\1\2", text)
+    text = _re.sub(r"([A-Za-z0-9)%）]) ([一-鿿])", r"\1\2", text)
+    text = _re.sub(r"\x00(\d+)\x00 ", lambda m: protected[int(m.group(1))], text)
     return text
 
 

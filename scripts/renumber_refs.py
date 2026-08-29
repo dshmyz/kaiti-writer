@@ -79,26 +79,86 @@ def check_docx(order):
     return [b for a, b in zip(order, order[1:]) if b < a]
 
 
+def _replace_once_in_sections(data, old_s, new_s):
+    """在 content_by_section 的所有文本块里做替换，返回命中次数（不写回重复命中）。"""
+    hit = 0
+    for blocks in data.get("content_by_section", {}).values():
+        if not isinstance(blocks, list):
+            continue
+        for i, blk in enumerate(blocks):
+            if isinstance(blk, str) and old_s in blk:
+                blocks[i] = blk.replace(old_s, new_s)
+                hit += 1
+    return hit
+
+
 def main():
     ap = argparse.ArgumentParser(description="GB/T 7714 顺序编码制引用编号校验与重排")
     ap.add_argument("--docx", required=True, help="开题报告 .docx 路径")
     ap.add_argument("--content", help="content.json 路径（--fix 时同步重排 refs 序号）")
     ap.add_argument("--check", action="store_true", help="只校验不修改")
     ap.add_argument("--fix", action="store_true", help="自动重排正文标注 + 文献表序号")
+    ap.add_argument("--insert", default=None,
+                    help='"旧文本=新文本;..." 先对 content.json 正文做唯一性替换再重排'
+                         "（插入新文献：refs 末尾加 [99] 占位条目，正文旧句子替换为含 [99] 的新句子，跑 --fix 归位）")
     args = ap.parse_args()
 
-    if not args.check and not args.fix:
-        ap.error("至少指定 --check 或 --fix 之一")
+    if not args.check and not args.fix and not args.insert:
+        ap.error("至少指定 --check 或 --fix 之一（--insert 可单独用，等价于替换正文后引导 rebuild+fix）")
+
+    # --- --insert：先替换 content.json 正文（唯一性校验，WorkBuddy 版优点） ---
+    if args.insert:
+        if not args.content:
+            ap.error("--insert 需要同时指定 --content")
+        with open(args.content, encoding="utf-8") as f:
+            data0 = json.load(f)
+        n_ins = 0
+        for pair in args.insert.split(";"):
+            if "=" not in pair:
+                print(f"⚠️  --insert 片段缺少 '='：{pair[:40]}")
+                sys.exit(1)
+            old_s, new_s = pair.split("=", 1)
+            hit = _replace_once_in_sections(data0, old_s, new_s)
+            if hit != 1:
+                print(f"⚠️  插入失败：\"{old_s[:30]}...\" 命中 {hit} 次（应为 1，旧文本须唯一）")
+                sys.exit(1)
+            n_ins += hit
+        with open(args.content, "w", encoding="utf-8") as f:
+            json.dump(data0, f, ensure_ascii=False, indent=2)
+        print(f"✅ 已替换 {n_ins} 处正文（content.json）")
+        print("⚠️  请先重新 build docx（让正文含新引用），再跑一次 --fix 完成重排：")
+        print("    python build_and_validate.py --template ... --content ... --output ...")
+        print("    python renumber_refs.py --docx ... --content ... --fix")
+        return
 
     order, doc = extract_first_order(args.docx)
     if not order:
         print("正文无引用标注，无需处理")
         return
+    # 友好检查：正文引用的编号是否都在文献表里（WorkBuddy 版优点——
+    # 引用了不存在的编号时给明确指引，而不是重排出一堆错号）
+    ref_nums = set()
+    for p in doc.paragraphs:
+        m0 = re.match(r"^\[(\d+)\]", p.text.strip())
+        if m0:
+            ref_nums.add(int(m0.group(1)))
+    ghost = [n for n in order if n not in ref_nums]
+    if ghost:
+        print(f"⚠️  正文引用了文献表中不存在的编号 {ghost[:8]}：")
+        print("    请先在 content.json 的 refs 中补齐这些条目（编号随意，重排后会自动修正），")
+        print("    或检查是否是手滑写错的引用号，再重新运行本工具。")
+        sys.exit(1)
     bad = check_docx(order)
-    if not bad:
+    if not bad and sorted(order) == list(range(1, len(order) + 1)):
         print(f"✅ 引用编号按首次出现顺序合规（{min(order)}-{max(order)}，共 {len(order)} 个编号）")
         return
     if args.check:
+        if not bad and sorted(order) != list(range(1, len(order) + 1)):
+            print(f"⚠️  首次出现顺序无乱序，但编号不连续：{sorted(order)}（如 [99] 占位未归位）")
+        else:
+            print(f"⚠️  引用编号未按首次出现顺序：乱序出现在 {bad[:8]}")
+        print("    → 运行本工具 --fix 自动重排")
+        sys.exit(1)
         print(f"⚠️  引用编号未按首次出现顺序：乱序出现在 {bad[:8]}")
         print("    → 运行本工具 --fix 自动重排")
         sys.exit(1)
@@ -152,6 +212,10 @@ def main():
             data = json.load(f)
 
         # 3a) 所有文本字段里的 [n] 标注按映射重写（正文引用在 section 文本里）
+        # 注意：refs 数组单独处理（文献表序号不能被 3a 当正文标注改掉，否则撞号）
+        refs_backup = data.get("refs", [])
+        data.pop("refs", None)
+
         def remap_text(v):
             if isinstance(v, str):
                 if CITE_RE.search(v):
@@ -163,19 +227,30 @@ def main():
                 return {k: remap_text(x) for k, x in v.items()}
             return v
         data = remap_text(data)
+        data["refs"] = refs_backup
 
         refs = data.get("refs", [])
-        def ref_num(s):
+        # 补全映射：refs 里正文未引用的编号（如占位条目、或多条文献共用正文一处引用），
+        # 按其在 refs 数组中的出现顺序接在已用编号之后，避免撞号/断号
+        full_mapping = dict(mapping)
+        used = set(mapping.values())
+        next_n = max(used, default=0) + 1
+        for s in refs:
             m = re.match(r"^\[(\d+)\]", s)
-            return mapping.get(int(m.group(1)), int(m.group(1))) if m else 10**9
-        data["refs"] = sorted(refs, key=ref_num)
-        # 重写序号本身
+            if not m:
+                continue
+            old_n = int(m.group(1))
+            if old_n not in full_mapping:
+                full_mapping[old_n] = next_n
+                next_n += 1
+        data["refs"] = sorted(refs, key=lambda s: full_mapping.get(
+            int(m.group(1)), 10**9) if (m := re.match(r"^\[(\d+)\]", s)) else 10**9)
         fixed = []
         for s in data["refs"]:
             m = re.match(r"^\[(\d+)\]", s)
             if m:
-                old = int(m.group(1))
-                s = re.sub(r"^\[\d+\]", f"[{mapping.get(old, old)}]", s)
+                old_n = int(m.group(1))
+                s = re.sub(r"^\[\d+\]", f"[{full_mapping[old_n]}]", s)
             fixed.append(s)
         data["refs"] = fixed
         with open(args.content, "w", encoding="utf-8") as f:
