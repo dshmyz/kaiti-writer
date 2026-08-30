@@ -430,19 +430,23 @@ def main():
 
     # === Step 3: 规范检查 ===
     if not args.skip_validate:
-        validate_docx(args.output)
+        validate_ok = validate_docx(args.output)
 
     # === Step 4: 参考文献质量闸（类型分布/近5年/学科配比证据/待核验残留） ===
+    quality_ok = True
     if os.path.isfile(quality_script):
         quality_cmd = [sys.executable, quality_script, "--content", args.content]
-        run_step("Step 4: 参考文献质量闸", quality_cmd)
+        quality_ok = run_step("Step 4: 参考文献质量闸", quality_cmd)
 
     # === Step 5: 改稿回归门禁（新旧 docx 逐段差异报告） ===
     if args.regress:
         regress_report(args.regress, args.output)
 
     print(f"\n{'='*50}")
-    print(f"  ✅ 全部完成：{args.output}")
+    if validate_ok and quality_ok:
+        print(f"  ✅ 全部完成：{args.output}")
+    else:
+        print(f"  ⚠️ 完成（有 ⚠️ 项待处理，见上方输出）：{args.output}")
     print(f"{'='*50}")
 
 
