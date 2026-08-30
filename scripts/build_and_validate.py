@@ -381,11 +381,14 @@ def main():
                         help="清全文档非确认红（正文/目录/附录），只保留含〈待确认〉标记的红")
     parser.add_argument("--skip-fix-refs", action="store_true", help="跳过 fix_refs 步骤")
     parser.add_argument("--skip-validate", action="store_true", help="跳过规范检查步骤")
+    parser.add_argument("--regress", default=None,
+                        help="改稿回归门禁：传入旧版 .docx 路径，构建后自动输出新旧正文逐段差异（防改 A 伤 B）")
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     build_script = os.path.join(script_dir, "build_from_template.py")
     fix_script = os.path.join(script_dir, "fix_refs.py")
+    quality_script = os.path.join(script_dir, "check_refs_quality.py")
 
     # === Step 1: build ===
     build_cmd = [sys.executable, build_script,
@@ -429,9 +432,65 @@ def main():
     if not args.skip_validate:
         validate_docx(args.output)
 
+    # === Step 4: 参考文献质量闸（类型分布/近5年/学科配比证据/待核验残留） ===
+    if os.path.isfile(quality_script):
+        quality_cmd = [sys.executable, quality_script, "--content", args.content]
+        run_step("Step 4: 参考文献质量闸", quality_cmd)
+
+    # === Step 5: 改稿回归门禁（新旧 docx 逐段差异报告） ===
+    if args.regress:
+        regress_report(args.regress, args.output)
+
     print(f"\n{'='*50}")
     print(f"  ✅ 全部完成：{args.output}")
     print(f"{'='*50}")
+
+
+def _is_toc_line(text):
+    """目录行特征：tab+页码结尾，或长引导点。"""
+    return bool(re.search(r"\t\d+$", text)) or "……" in text or bool(re.search(r"\.{6,}", text))
+
+
+def regress_report(old_path, new_path, max_show=10):
+    """改稿回归门禁：对齐新旧 docx 的非目录正文段，报告差异块。
+
+    教训来源：一次实操中新增句子被静默丢失，靠手工 diff 才发现。
+    本报告让"预期改动之外的意外段落"在交付前自动现形。
+    """
+    import difflib
+    from docx import Document
+
+    def paras(path):
+        doc = Document(path)
+        return [p.text.strip() for p in doc.paragraphs
+                if p.text.strip() and not _is_toc_line(p.text.strip())]
+
+    try:
+        o, n = paras(old_path), paras(new_path)
+    except Exception as e:
+        print(f"⚠️  回归报告读取失败：{e}")
+        return
+
+    print(f"\n{'='*50}")
+    print(f"  回归差异报告（旧 {len(o)} 段 → 新 {len(n)} 段）")
+    print(f"{'='*50}")
+    sm = difflib.SequenceMatcher(a=o, b=n, autojunk=False)
+    changed = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != "equal":
+            changed.append((tag, o[i1:i2], n[j1:j2]))
+    if not changed:
+        print("✅ 新旧版本正文零差异")
+        return
+    print(f"差异块: {len(changed)} 处（以上差异应全部对应本次有意修改）")
+    for tag, olds, news in changed[:max_show]:
+        for t_ in olds[:1]:
+            print(f"  - 旧[{tag}]: {t_[:52]}")
+        for t_ in news[:1]:
+            print(f"  + 新[{tag}]: {t_[:52]}")
+    if len(changed) > max_show:
+        print(f"  ...共 {len(changed)} 处，请人工核对全量")
+    print("提示：出现与本次修改无关的段落差异即为回归，需排查。")
 
 
 if __name__ == "__main__":
