@@ -722,6 +722,10 @@ def duplicate_slide(prs, src_slide, pristine_xml=None):
     for rel in src_slide.part.rels.values():
         if rel.is_external:
             new_slide.part.rels.get_or_add_ext_rel(rel.reltype, rel.target_ref)
+        elif "notesSlide" in rel.reltype:
+            # 演讲者备注关系不复制：源页首次填词后已挂 notes，复制会多页共用一个
+            # notesSlide 部件，被文件级校验拒绝；备注在复制后由 set_slide_notes 重新建
+            continue
         else:
             new_slide.part.rels.get_or_add(rel.reltype, rel._target)
     return new_slide
