@@ -4,13 +4,16 @@
 用法：
     python derive_ppt_content.py --content content.json --output ppt_content.json
 
-映射规则：
-- content_by_section 的每个节 → PPT 的一个 chapter
-- 节标题 → chapter.name
-- 节内的文本段落 → slides 的 bullets（前 5 条）
-- 节内的 image 块 → 标记为【图：caption】
-- 节内的 table 块 → 标记为【表：caption】
-- 封面信息直接复用
+布局自动识别（优先顺序）：
+- 「实施计划」节（配合顶层 plan_table）→ gantt 甘特时间轴
+- 「研究思路 / 研究框架 / 技术路线」节（含 → 链或顶层 route.nodes）→ flow 流程图
+- 「研究方法」节 → compare 方法对比表
+- 含多个百分比的数据页 → stats 大数字卡片
+- 含「阶段一/第一阶段/前期中期」等 → pipeline 阶段条
+- 其余 → text_only 文字要点页（超过 5 条自动拆两页）
+
+图表页的 `extra` 字段即 render_diagrams.py 各 draw_* 的 data 结构；
+`bullets` 保留原文要点，供演讲者备注与降级兜底用。
 """
 import argparse
 import json
@@ -30,13 +33,24 @@ SECTION_ORDER = [
     "五、预期目标和成果",
 ]
 
-# 节标题清理：去掉序号前缀，保留核心名
+SECTION_NAME_ALIAS = {
+    "国内外研究现状": "文献综述",
+    "研究框架（内容）": "研究框架",
+    "（一）研究思路": "研究思路",
+    "（二）研究方法": "研究方法",
+    "（三）创新之处": "创新之处",
+    "四、学位论文实施计划": "实施计划",
+    "五、预期目标和成果": "预期成果",
+}
+
+
 def clean_section_name(key: str) -> str:
     """（一）研究背景 → 研究背景"""
-    return re.sub(r"^[（(一二三四五六七八九十]+[）)]\s*", "", key).strip()
+    n = re.sub(r"^[（(一二三四五六七八九十]+[）)]\s*", "", key).strip()
+    return SECTION_NAME_ALIAS.get(n, n)
 
 
-def extract_bullets(items: list, max_bullets: int = 5) -> tuple[list, list]:
+def extract_bullets(items: list, max_bullets: int = 6) -> tuple[list, list]:
     """从 content_by_section 的值数组中提取文本 bullets 和特殊布局页。
 
     返回 (bullets, special_slides)：
@@ -47,12 +61,10 @@ def extract_bullets(items: list, max_bullets: int = 5) -> tuple[list, list]:
     special_slides = []
     for item in items:
         if isinstance(item, str):
-            # 长段落按句号拆分，取前几句
             text = item.strip()
             if not text:
                 continue
             if len(text) > 60:
-                # 按句号/分号拆，取前 max_bullets 段
                 parts = re.split(r"[。；]", text)
                 for p in parts:
                     p = p.strip()
@@ -68,10 +80,8 @@ def extract_bullets(items: list, max_bullets: int = 5) -> tuple[list, list]:
             if "image" in item:
                 caption = item.get("caption", "技术路线图")
                 image_path = item.get("image", "")
-                # 图片页单独一页，不混在 bullets 里
                 special_slides.append({
-                    "title": caption,
-                    "layout": "image_center",
+                    "title": caption, "layout": "image_center",
                     "bullets": [],
                     "extra": {"image": image_path, "caption": caption}
                 })
@@ -79,7 +89,6 @@ def extract_bullets(items: list, max_bullets: int = 5) -> tuple[list, list]:
                 caption = item.get("caption", "")
                 headers = item["table"].get("headers", [])
                 rows = item["table"].get("rows", [])
-                # 表格页单独一页
                 special_slides.append({
                     "title": caption or " ".join(headers[:3]),
                     "layout": "table",
@@ -92,7 +101,6 @@ def extract_bullets(items: list, max_bullets: int = 5) -> tuple[list, list]:
                     if len(bullets) >= max_bullets:
                         break
             elif "chart" in item:
-                # 图表数据
                 chart_type = item["chart"].get("type", "bar")
                 chart_data = item["chart"].get("data", {})
                 special_slides.append({
@@ -106,91 +114,217 @@ def extract_bullets(items: list, max_bullets: int = 5) -> tuple[list, list]:
     return bullets, special_slides
 
 
-def derive(content: dict) -> dict:
-    """从 content.json 派生 ppt_content.json。"""
-    ppt = {
-        "title": content.get("title", ""),
-        "subtitle": "开题汇报",
-        "cover": content.get("cover", {}),
-        "chapters": [],
-    }
+# ── 布局识别 ───────────────────────────────────────────────────
+def _is_plan(key: str) -> bool:
+    return any(k in key for k in ("实施计划", "时间安排", "进度", "计划安排"))
 
-    sections = content.get("content_by_section", {})
 
-    # 按 SECTION_ORDER 的顺序排列，未在列表里的节追加到末尾
-    ordered_keys = []
-    for k in SECTION_ORDER:
-        if k in sections:
-            ordered_keys.append(k)
-    for k in sections:
-        if k not in ordered_keys:
-            ordered_keys.append(k)
+def _is_route(key: str) -> bool:
+    return any(k in key for k in ("研究思路", "研究框架", "技术路线", "研究方案"))
 
-    for key in ordered_keys:
-        items = sections[key]
-        name = clean_section_name(key)
-        bullets, special_slides = extract_bullets(items)
 
-        slides = []
+def _is_method(key: str) -> bool:
+    return "方法" in key and "研究思路" not in key
 
-        # 普通文字页（智能检测布局）
-        if bullets:
-            # 检测是否应该用特殊布局
-            smart_layout, smart_extra = _detect_smart_layout(name, bullets, items)
-            if smart_layout != "text_only" and smart_extra:
-                slides.append({
-                    "title": name,
-                    "bullets": bullets,
-                    "layout": smart_layout,
-                    "extra": smart_extra
-                })
-            elif len(bullets) > 5:
-                # bullets 超过 5 条，拆成两页
-                slides.append({"title": name, "bullets": bullets[:5]})
-                slides.append({"title": f"{name}（续）", "bullets": bullets[5:]})
-            else:
-                slides.append({"title": name, "bullets": bullets})
 
-        # 特殊布局页（图片/图表/表格）
-        for special in special_slides:
-            slides.append(special)
+def _route_nodes(content: dict, items: list) -> list | None:
+    """提取流程图节点：顶层 route.nodes → 「→」链 → 框架段落里的链条描述。"""
+    route = content.get("route") or {}
+    nodes = route.get("nodes")
+    if nodes:
+        return nodes
+    for item in items:
+        if isinstance(item, str) and "→" in item:
+            parts = [p.strip() for p in item.split("→") if p.strip()]
+            if len(parts) >= 3:
+                return parts
+    # 框架段落含「沿……链条」描述：按「→」或关键连接词拆
+    joined = "".join(i for i in items if isinstance(i, str))
+    if "→" in joined:
+        parts = [p.strip() for p in joined.split("→") if p.strip()]
+        if len(parts) >= 3:
+            return parts
+    return None
 
-        if not slides:
+
+def _plan_gantt(content: dict) -> dict | None:
+    """顶层 plan_table → gantt 数据。plan_table: {headers, rows:[阶段,内容,时间]}。"""
+    pt = content.get("plan_table") or {}
+    rows = pt.get("rows") or []
+    if not rows:
+        return None
+    tasks = []
+    for r in rows:
+        if isinstance(r, (list, tuple)) and len(r) >= 2:
+            tasks.append({
+                "phase": str(r[0]),
+                "content": str(r[1]) if len(r) > 2 else "",
+                "time": str(r[2] if len(r) > 2 else r[1]),
+            })
+        elif isinstance(r, dict):
+            tasks.append({
+                "phase": str(r.get("阶段") or r.get("phase") or ""),
+                "content": str(r.get("内容") or r.get("content") or ""),
+                "time": str(r.get("时间") or r.get("time") or ""),
+            })
+    return {"tasks": tasks}
+
+
+def _method_rows(bullets: list) -> list | None:
+    """方法节 → 对比表行：拆「方法名：说明」。不足两行则返回 None。"""
+    rows = []
+    for b in bullets:
+        b = re.sub(r"^[●•]\s*", "", b).strip()
+        if "：" in b:
+            name, desc = b.split("：", 1)
+        elif ":" in b:
+            name, desc = b.split(":", 1)
+        else:
             continue
-
-        # 为每页生成 speaker notes
-        for slide in slides:
-            slide["notes"] = _generate_notes(name, slide)
-
-        ppt["chapters"].append({"name": name, "slides": slides})
-
-    return ppt
+        name = name.strip()
+        desc = re.split(r"[。；]", desc.strip())[0][:40]
+        if name:
+            rows.append([name, desc])
+    return rows if len(rows) >= 2 else None
 
 
+def _stats_data(bullets: list) -> dict | None:
+    """含 ≥2 个百分比的段落 → 大数字卡片数据。"""
+    stats = []
+    for b in bullets:
+        for m in re.finditer(r"(\d{1,3}(?:\.\d)?)\s*%", b):
+            label = re.sub(r"(\d{1,3}(?:\.\d)?)\s*%", "‖", b).strip("，。；、 ")
+            label = label.split("‖")[0].strip()
+            if len(label) > 18:
+                label = label[:18] + "…"
+            stats.append({"number": f"{m.group(1)}%", "label": label})
+            if len(stats) >= 4:
+                break
+        if len(stats) >= 4:
+            break
+    return {"stats": stats} if len(stats) >= 2 else None
+
+
+_STAGE_RE = re.compile(r"(第[一二三四五六]阶段|阶段[一二三四五六]|前期|中期|后期|步骤[一二三四五])")
+_STAGE_NO = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}
+
+
+def _stages_data(bullets: list) -> dict | None:
+    """含「阶段/步骤」标记 → 阶段条数据。"""
+    stages = []
+    seen = set()
+    for b in bullets:
+        m = _STAGE_RE.search(b)
+        if not m:
+            continue
+        tag = m.group(0)
+        key = _STAGE_NO.get(tag[-1], len(stages) + 1)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = tag
+        desc = b.replace(tag, "", 1).lstrip("：:： ").strip("，。；、 ")
+        desc = re.sub(r"^[●•]\s*", "", desc)
+        if len(desc) > 20:
+            desc = desc[:20] + "…"
+        stages.append({"label": label, "desc": desc})
+    if not stages:
+        return None
+    stages.sort(key=lambda s: _STAGE_NO.get(s["label"][-1], 99))
+    return {"stages": stages}
+
+
+def _make_slide(title: str, bullets: list, layout: str, extra=None,
+                notes_bullets=None) -> dict:
+    return {"title": title, "bullets": bullets, "layout": layout,
+            "extra": extra}
+
+
+def _build_chapter_slides(key: str, name: str, bullets: list, special_slides: list,
+                          content: dict, items: list) -> list:
+    """按优先级决定本节的页面布局。返回 slides 列表。"""
+    slides = []
+
+    if _is_plan(key):
+        g = _plan_gantt(content)
+        if g:
+            slides.append(_make_slide("实施计划与时间安排", bullets, "gantt", g))
+            slides.extend(special_slides)
+            return slides
+
+    if _is_route(key):
+        nodes = _route_nodes(content, items)
+        if nodes:
+            flat = all(isinstance(n, str) for n in nodes) and len(nodes) <= 6
+            slides.append(_make_slide(
+                name, bullets, "flow",
+                {"nodes": nodes, "direction": "horizontal" if flat else "vertical"}))
+            slides.extend(special_slides)
+            return slides
+
+    if _is_method(key):
+        rows = _method_rows(bullets)
+        if rows:
+            slides.append(_make_slide(
+                "研究方法", bullets, "compare",
+                {"headers": ["研究方法", "做法要点"], "rows": rows}))
+            slides.extend(special_slides)
+            return slides
+
+    if bullets:
+        stats = _stats_data(bullets)
+        if stats:
+            slides.append(_make_slide(name, bullets, "stats", stats))
+            slides.extend(special_slides)
+            return slides
+        stages = _stages_data(bullets)
+        if stages:
+            slides.append(_make_slide(name, bullets, "pipeline", stages))
+            slides.extend(special_slides)
+            return slides
+
+    # 兜底：文字要点页
+    if bullets:
+        if len(bullets) > 5:
+            slides.append(_make_slide(name, bullets[:5], "text_only"))
+            slides.append(_make_slide(f"{name}（续）", bullets[5:], "text_only"))
+        else:
+            slides.append(_make_slide(name, bullets, "text_only"))
+    slides.extend(special_slides)
+    return slides
+
+
+# ── 演讲者备注 ─────────────────────────────────────────────────
 def _generate_notes(chapter_name: str, slide: dict) -> str:
-    """根据页面内容自动生成演讲者备注。"""
     title = slide.get("title", "")
     bullets = slide.get("bullets", [])
     layout = slide.get("layout", "text_only")
-
     notes_parts = []
 
-    # 开场提示
     if "背景" in chapter_name or "意义" in chapter_name:
         notes_parts.append("开场：用具体案例/数据引出问题，不要从宏观政策开始。")
     elif "文献" in chapter_name:
         notes_parts.append("过渡语：前面讲了问题，现在看看别人怎么做的，有什么不足。")
     elif "框架" in chapter_name or "思路" in chapter_name:
-        notes_parts.append("过渡语：基于文献不足，我的研究思路是...")
+        notes_parts.append("过渡语：基于文献不足，我的研究思路是…")
     elif "方法" in chapter_name:
-        notes_parts.append("过渡语：具体怎么做？用三种方法。")
+        notes_parts.append("过渡语：具体怎么做？用这三种方法。")
     elif "创新" in chapter_name:
         notes_parts.append("重点：这是评审最关注的页，讲清楚新在哪里。")
     elif "计划" in chapter_name:
         notes_parts.append("收尾：时间节点清晰，让评审觉得可行。")
 
-    # 内容提示
-    if layout == "chart":
+    if layout == "gantt":
+        notes_parts.append("指向时间轴：先讲整体周期，再讲几个关键节点，不逐行念。")
+    elif layout == "flow":
+        notes_parts.append("指向流程图：沿箭头讲清研究推进的逻辑链，每框一句话。")
+    elif layout == "pipeline":
+        notes_parts.append("指向阶段条：讲阶段划分与衔接，每阶段一句话。")
+    elif layout == "compare":
+        notes_parts.append("指向表格：对比差异，不要逐格念。")
+    elif layout == "stats":
+        notes_parts.append("指向大数字：每个数字配一句说明，突出关键结论。")
+    elif layout == "chart":
         notes_parts.append("指向图表：重点讲数据趋势，不要逐个读数字。")
     elif layout == "image_center":
         notes_parts.append("指向图片：解释图中关键要素，说明其与研究的关系。")
@@ -199,7 +333,6 @@ def _generate_notes(chapter_name: str, slide: dict) -> str:
     elif len(bullets) > 3:
         notes_parts.append("要点较多，挑重点讲，其余让评审自己看。")
 
-    # 结尾提示
     if "创新" in title:
         notes_parts.append("强调：每个创新点用一句话说清楚。")
     elif "实施" in title or "计划" in title:
@@ -208,48 +341,34 @@ def _generate_notes(chapter_name: str, slide: dict) -> str:
     return "\n".join(notes_parts) if notes_parts else ""
 
 
-def _detect_smart_layout(chapter_name: str, bullets: list[str], items: list) -> tuple[str, dict | None]:
-    """智能检测页面布局：根据内容自动推荐最佳布局。
+# ── 主流程 ─────────────────────────────────────────────────────
+def derive(content: dict) -> dict:
+    ppt = {
+        "title": content.get("title", ""),
+        "subtitle": "开题汇报",
+        "cover": content.get("cover", {}),
+        "chapters": [],
+    }
 
-    返回 (layout, extra)：
-    - layout: text_only / big_number / comparison / timeline / table
-    - extra: 特殊布局的额外数据
-    """
-    # 检测百分比数据 → 大数字布局
-    for b in bullets:
-        pct_match = re.search(r"(\d{1,3})%", b)
-        if pct_match:
-            num = pct_match.group(1)
-            # 提取上下文作为标签
-            label = re.sub(r"\d{1,3}%", "", b).strip().strip("，。、：")
-            if len(label) > 20:
-                label = label[:20] + "..."
-            return "big_number", {"number": f"{num}%", "label": label}
+    sections = content.get("content_by_section", {})
+    ordered_keys = [k for k in SECTION_ORDER if k in sections]
+    for k in sections:
+        if k not in ordered_keys:
+            ordered_keys.append(k)
 
-    # 检测对比结构（"A vs B"、"优于""高于""低于"）→ 对比布局
-    comparison_keywords = ["优于", "高于", "低于", "多于", "少于", "相比", "对比", "差异"]
-    for b in bullets:
-        if any(kw in b for kw in comparison_keywords):
-            # 提取对比双方
-            parts = re.split(r"[，。；]", b)
-            if len(parts) >= 2:
-                return "comparison", {"items": [p.strip() for p in parts if p.strip()][:4]}
+    for key in ordered_keys:
+        items = sections[key]
+        name = clean_section_name(key)
+        bullets, special_slides = extract_bullets(items)
+        slides = _build_chapter_slides(key, name, bullets, special_slides,
+                                       content, items)
+        if not slides:
+            continue
+        for slide in slides:
+            slide["notes"] = _generate_notes(name, slide)
+        ppt["chapters"].append({"name": name, "slides": slides})
 
-    # 检测时间线（"第一阶段""2024年""2025年"等）→ 时间线布局
-    timeline_patterns = [r"第[一二三四]阶段", r"\d{4}年", r"前期|中期|后期", r"个月"]
-    for b in bullets:
-        if any(re.search(p, b) for p in timeline_patterns):
-            return "timeline", {"items": [re.sub(r"^[●•]\s*", "", b) for b in bullets[:5]]}
-
-    # 检测方法对比（含"方法""方法论"且有多条）→ 表格布局
-    if "方法" in chapter_name and len(bullets) >= 3:
-        return "table", {
-            "headers": ["方法", "适用场景", "优势"],
-            "rows": [re.split(r"[，：:]", b)[:3] for b in bullets[:4]]
-        }
-
-    # 默认：普通文字
-    return "text_only", None
+    return ppt
 
 
 def main():
@@ -261,7 +380,9 @@ def main():
     content = json.loads(a.content.read_text(encoding="utf-8"))
     ppt = derive(content)
     a.output.write_text(json.dumps(ppt, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"saved: {a.output} ({len(ppt['chapters'])} chapters)")
+    layouts = [s["layout"] for ch in ppt["chapters"] for s in ch["slides"]]
+    print(f"saved: {a.output} ({len(ppt['chapters'])} chapters, "
+          f"{len(layouts)} 页：{' / '.join(sorted(set(layouts)))})")
 
 
 if __name__ == "__main__":

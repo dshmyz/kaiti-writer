@@ -5,7 +5,7 @@
 保留模板全部母版/版式/配色/图形（同 build_from_template.py 的"改而不建"思路）。
 """
 from __future__ import annotations
-import argparse, json, re
+import argparse, json, os, re
 from pathlib import Path
 
 try:
@@ -17,6 +17,17 @@ except ImportError:
         "  安装：pip install python-pptx（或 python3 -m pip install python-pptx）\n"
         "  不想安装：可改为只要「markdown 逐页大纲」，自己粘进 PPT。"
     )
+
+try:
+    from render_diagrams import draw as draw_diagram
+except ImportError:
+    # 以模块方式从别的目录导入时，脚本自身目录不在 sys.path
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from render_diagrams import draw as draw_diagram
+
+# 由 render_diagrams.py 原生绘制的图表布局（不再依赖模板占位文字）
+DIAGRAM_LAYOUTS = {"flow", "pipeline", "gantt", "stats", "compare", "table", "bars"}
 
 # 各模板的页角色索引（1-based，来自实际探查）
 TEMPLATE_MAP = {
@@ -237,6 +248,12 @@ def fill_toc(slide, chapters):
         set_text_keep_style(title_slots[i], "")
     for i in range(len(chapters), len(num_slots)):
         set_text_keep_style(num_slots[i], "")
+    # 兜底：清掉没被填中的占位/序号形状。填过的序号是带前导零的 "01"，
+    # 未选中的变体是 "1"、"请输入你的标题" 等，按当前文字模式区分即可。
+    for sh in text_shapes(slide):
+        t = sh.text_frame.text.strip()
+        if is_placeholder(t) or re.fullmatch(r"[1-9]\d?", t) or DECOR_EXACT.match(t):
+            set_text_keep_style(sh, "")
     clear_decor(slide)
     clean_watermarks(slide)
 
@@ -258,14 +275,20 @@ def fill_section(slide, idx, name):
     clean_watermarks(slide)
 
 
-def fill_content(slide, title, bullets, layout="text_only", extra=None):
+def fill_content(slide, title, bullets, layout="text_only", extra=None,
+                 slide_size=None):
     """内容页：根据 layout 类型填充不同内容。
 
-    layout: text_only / image_center / chart / table / big_number / comparison / timeline
-    extra: 额外数据（图片路径、图表数据、表格数据等）
+    layout: text_only / image_center / chart / table / big_number / comparison /
+            timeline / flow / pipeline / gantt / stats / bars
+    extra: 额外数据（图片路径、图表数据、表格数据、diagram 数据等）
+    slide_size: (slide_width, slide_height) EMU，图表页布局用
     """
     clear_decor(slide)
 
+    if layout in DIAGRAM_LAYOUTS and extra:
+        _fill_diagram_slide(slide, title, extra, layout, slide_size)
+        return
     if layout == "image_center" and extra:
         _fill_image_slide(slide, title, extra)
         return
@@ -292,7 +315,7 @@ def fill_content(slide, title, bullets, layout="text_only", extra=None):
         return
 
     # 改进：结合位置和内容提示选形状，不再只按面积
-    slide_height = slide.slide_height or 6858000  # 默认高度
+    slide_height = (slide_size or (12192000, 6858000))[1]
     title_shape, content_shape = _select_title_and_content(slots, slide_height)
 
     # 写标题
@@ -300,10 +323,10 @@ def fill_content(slide, title, bullets, layout="text_only", extra=None):
     # 写内容（多条 bullets，用 fit 防溢出）
     full_text = "\n".join(bullets)
     fit_text_to_shape(content_shape, full_text)
-    # 剩余小占位块清空
-    used = {content_shape, title_shape}
+    # 剩余小占位块清空（Shape 不可哈希，按 id 判等）
+    used_ids = {id(content_shape), id(title_shape)}
     for sh in slots:
-        if sh not in used:
+        if id(sh) not in used_ids:
             set_text_keep_style(sh, "")
     clean_watermarks(slide)
 
@@ -356,6 +379,44 @@ def _select_title_and_content(slots, slide_height):
         content_shape = title_shape
 
     return title_shape, content_shape
+
+
+def _fill_diagram_slide(slide, title, diagram, layout, slide_size):
+    """图表页：清空模板内容区占位文字，在标题下方的整块区域画原生图形。
+
+    保留模板页的背景/标题栏设计，用 render_diagrams.draw 画流程图/甘特/大数字等。
+    画不出（数据缺）则降级为文字要点页。
+    """
+    SW, SH = slide_size or (12192000, 6858000)
+    from pptx.util import Emu
+    slots = [sh for sh in text_shapes(slide) if is_placeholder(sh.text_frame.text)]
+    tshape = None
+    if slots:
+        tshape, _ = _select_title_and_content(slots, SH)
+    if tshape is not None:
+        set_text_keep_style(tshape, title)
+        for sh in slots:
+            if sh is not tshape:
+                set_text_keep_style(sh, "")
+        top = (tshape.top or 0) + (tshape.height or 0) + int(SH * 0.05)
+    else:
+        top = int(SH * 0.17)
+    left = int(SW * 0.07)
+    width = SW - 2 * left
+    height = SH - top - int(SH * 0.05)
+    if not draw_diagram(slide, layout, (left, top, width, height), diagram):
+        # 数据不足，降级为文字页
+        bullets = _diagram_to_bullets(diagram)
+        fill_content(slide, title, bullets, "text_only", slide_size=slide_size)
+    clean_watermarks(slide)
+
+
+def _diagram_to_bullets(diagram):
+    """把 diagram 数据降级成文字要点（图表数据缺失时的兜底）。"""
+    if not diagram:
+        return ["【图表数据缺失，请在 PowerPoint 中补充】"]
+    text = json.dumps(diagram, ensure_ascii=False)
+    return [f"【图表内容待补充】{text[:60]}…"]
 
 
 def _fill_image_slide(slide, title, extra):
@@ -758,10 +819,13 @@ def build(template: Path, content_path: Path, output: Path):
                 slide = base
             layout = spec.get("layout", "text_only")
             extra = spec.get("extra", {})
+            slide_size = (prs.slide_width, prs.slide_height)
             if layout != "text_only" and extra:
-                fill_content(slide, spec.get("title", ""), spec.get("bullets", []), layout, extra)
+                fill_content(slide, spec.get("title", ""), spec.get("bullets", []),
+                             layout, extra, slide_size=slide_size)
             else:
-                fill_content(slide, spec.get("title", ""), spec.get("bullets", []))
+                fill_content(slide, spec.get("title", ""), spec.get("bullets", []),
+                             slide_size=slide_size)
             # 写入演讲者备注
             notes = spec.get("notes", "")
             if notes:
@@ -843,14 +907,23 @@ def _run_pptx_validate(output_path, template_path):
     if not validate_script.exists():
         return  # pptx 技能未安装，跳过
     try:
+        import defusedxml  # noqa: F401   # pptx 技能 validate.py 的依赖
+    except ImportError:
+        print("  ⏭ pptx validate 跳过：缺 defusedxml（pip install defusedxml 可启用）")
+        return
+    try:
         result = subprocess.run(
             ["python3", str(validate_script), str(output_path), "--original", str(template_path)],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
+            lines = [l for l in (result.stdout or "").strip().split("\n")
+                     if l and "Traceback" not in l and "File \"" not in l]
             print(f"  ⚠ pptx validate 发现问题：")
-            for line in result.stdout.strip().split("\n")[:10]:  # 最多显示10行
+            for line in lines[:8]:
                 print(f"    {line}")
+            if not lines:
+                print("    （无具体输出，可忽略或手动检查）")
         else:
             print("  ✓ pptx validate 通过")
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -917,25 +990,29 @@ def validate_content_density(data):
     if effective < 10:
         issues.append(f"总页数仅 {effective} 页，建议至少 12 页以保证内容完整")
 
-    # 逐章检查：每页 bullets 数量
+    # 逐章检查：每页 bullets 数量（图表页由图形承载内容，跳过）
     thin_pages = []
     for ch in chapters:
         for sl in ch.get("slides", []):
+            if sl.get("layout") in DIAGRAM_LAYOUTS:
+                continue
             n_bullets = len(sl.get("bullets", []))
             if n_bullets < 3:
                 thin_pages.append(f"「{ch['name']}」→「{sl.get('title', '')[:20]}」仅 {n_bullets} 条")
     if thin_pages:
         issues.append("以下页面内容过薄（<3 条 bullets），建议补充或合并到相邻页：" + "；".join(thin_pages[:5]))
 
-    # 检查是否有图表占位
-    has_diagram = False
-    for ch in chapters:
-        for sl in ch.get("slides", []):
-            for b in sl.get("bullets", []):
-                if "【图" in b or "【表" in b or "路线图" in b:
-                    has_diagram = True
+    # 检查是否有图表（原生图表页或图表占位都算）
+    has_diagram = any(sl.get("layout") in DIAGRAM_LAYOUTS
+                      for ch in chapters for sl in ch.get("slides", []))
     if not has_diagram:
-        issues.append("未发现图表占位（【图：xxx】/【表：xxx】），研究框架/路线图/时间表建议嵌图")
+        for ch in chapters:
+            for sl in ch.get("slides", []):
+                for b in sl.get("bullets", []):
+                    if "【图" in b or "【表" in b or "路线图" in b:
+                        has_diagram = True
+    if not has_diagram:
+        issues.append("未发现图表页，研究框架/技术路线/实施计划建议用 flow/gantt 布局嵌图")
 
     # 检查章节标题是否太泛
     generic_titles = {"研究背景", "文献综述", "研究方法", "创新之处", "实施计划",
@@ -972,12 +1049,13 @@ def auto_fix_content_density(data):
         if not slides:
             continue
 
-        # 修复 1：合并空洞页（bullets < 2 的页合并到前一页）
+        # 修复 1：合并空洞页（text_only 且 bullets < 2 的页合并到前一页；
+        #        图表页由图形承载内容，不合并）
         merged_slides = []
         for sl in slides:
             bullets = sl.get("bullets", [])
-            if len(bullets) < 2 and merged_slides:
-                # 合并到前一页
+            is_diagram = sl.get("layout") in DIAGRAM_LAYOUTS
+            if (not is_diagram and len(bullets) < 2 and merged_slides):
                 prev = merged_slides[-1]
                 prev_bullets = prev.get("bullets", [])
                 prev_bullets.extend(bullets)
@@ -987,8 +1065,10 @@ def auto_fix_content_density(data):
                 merged_slides.append(sl)
         ch["slides"] = merged_slides
 
-        # 修复 2：精简超长 bullets（超过 25 字的截断）
+        # 修复 2：精简超长 bullets（超过 25 字的截断；图表页的原文要点不截，留作备注）
         for sl in ch.get("slides", []):
+            if sl.get("layout") in DIAGRAM_LAYOUTS:
+                continue
             bullets = sl.get("bullets", [])
             new_bullets = []
             for b in bullets:

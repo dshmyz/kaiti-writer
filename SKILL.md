@@ -235,7 +235,9 @@ description: 撰写、审阅、修订北京航空航天大学（北航）研究�
 - `templates/开题报告大纲.md` — 内容草稿脚手架；`templates/范例-问题研究型.md` — 参考范文
 - `templates/内容示例-社区减负.json`（问题研究型，**含表格/插图/列表/脚注四种混排块示例**）、`内容示例-案例分析.json`、`内容示例-调研分析.json`、`内容示例-政策分析.json` — content.json 格式示例（四类各一）
 - `assets/templates/ppt/模板1-北航答辩通用.pptx`、`模板2-…`、`模板3-…` — 三套内置答辩 PPT 模板（16:9，生成 PPT 时让用户选）
-- `scripts/build_ppt_from_template.py` — 基于上述模板生成汇报 PPT（改而不建，自动清水印/占位，支持图表/图片/表格嵌入，生成后自动调 pptx 技能 validate.py 做文件级验证）
+- `scripts/build_ppt_from_template.py` — 基于上述模板生成汇报 PPT（改而不建，自动清水印/占位；支持 flow/gantt/stats/compare/pipeline/bars 原生图表布局，生成后自动调 pptx 技能 validate.py 做文件级验证）
+- `scripts/render_diagrams.py` — 原生图表渲染库：流程图/甘特/大数字/对比表/阶段条/柱状图，北航蓝配色、可编辑、零新增依赖（仅 python-pptx）
+- `scripts/derive_ppt_content.py` — 从 content.json 自动派生 ppt_content.json，并按内容结构自动选用图表布局（实施计划→gantt、研究思路/框架→flow、方法→compare、数据→stats、阶段→pipeline）
 - `scripts/check_refs_quality.py` — 参考文献质量闸自动化（类型分布/同行评议占比/近5年/中英构成/核心期刊命中 --core-journals/待核验残留；只报告不修改，退出码 0/1；文献检索步骤与构建 Step 4 自动调用）
 - `references/实施支持包.md` — 论文实施支持包生成规范（访谈提纲框架五段结构/数据指标清单三表/可得性摸底三类来源×判定）
 - `scripts/renumber_refs.py` — GB/T 7714 顺序编码制**引用编号校验与重排**（--check 把关 / --fix 自动重排正文+文献表+content.json / 插入新文献用 [99] 占位后 --fix 一步归位）；build_and_validate.py 第 4.5 步每次构建自动检查引用顺序，违规即提示运行本工具

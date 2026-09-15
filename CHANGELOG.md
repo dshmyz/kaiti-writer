@@ -1,6 +1,25 @@
 # Changelog（开题报告技能）
 
 
+## 本地补丁（2026-09-15，PPT 视觉升级：原生图表）
+
+**问题**：汇报 PPT 全是文字 bullets，难看。模板自带流程图/时间轴/大数字等视觉页，但生成脚本只用了纯文字页，derive 也几乎全产出 text_only。
+
+**新增**：
+- **`scripts/render_diagrams.py`**（新）：python-pptx 原生图表渲染库——`flow` 流程图（纵向/横向、支持并列分支）、`pipeline` 阶段条、`gantt` 甘特时间轴、`stats` 大数字卡片、`compare` 方法对比表、`table` 通用表、`bars` 柱状图。北航蓝配色体系（#003366/#005BAC）、中文逐字换行与字号自适应、箭头用连接线+tailEnd 三角。**零新增依赖**（仅 python-pptx，已必需），输出在 PowerPoint 里可编辑。
+- **derive_ppt_content.py 布局识别**：按内容结构自动选用图表布局——实施计划节（配合顶层 plan_table）→ gantt；研究思路/框架/技术路线（→链或 route.nodes）→ flow；研究方法节 → compare 方法对比表；含 ≥2 个百分比的段 → stats；含阶段/步骤标记 → pipeline；其余才 text_only 且超 5 条拆页。
+- **build_ppt_from_template.py 接入**：图表布局清空内容区占位文字后在标题下方整块绘制；密度自动修复与自检不再把图表页当"空洞页"截断/合并。
+
+**修复（沿路的遗留 bug）**：
+- `slide.slide_height` 属性不存在（python-pptx）→ 用传入的 slide_size，之前一进文字页就崩
+- `{content_shape, title_shape}` 集合构造——Shape 不可哈希 → 改按 id 判等
+- `_generate_preview_images` 用了未 import 的 `os` → 顶部补 `import os`
+- 目录页重叠变体组里未选中的占位形状残留（"请输入你的标题"/裸序号）→ 按当前文字模式兜底清扫（填过的序号是带前导零的 "01"，可区分）
+- `_run_pptx_validate` 在缺 defusedxml 时把 traceback 当成"发现问题"吓人 → 缺依赖明确提示跳过，过滤 traceback 行
+
+**文档**：一站式收尾.md 更新图表布局 schema 与设计规范（关键页必须上图表）；SKILL.md 脚本清单补 render_diagrams.py 与新 derive 说明。
+
+
 ## 本地补丁（2026-08-29，第二波：合入 WorkBuddy v3.2）
 
 - **scripts/check_refs_quality.py**（新）：参考文献质量闸自动化——类型分布/同行评议占比/近5年占比/中英构成/核心期刊命中（--core-journals）/待核验残留，只报告不修改，退出码 0/1。已挂入 build_and_validate.py Step 4 与 SKILL.md 步骤 2。
