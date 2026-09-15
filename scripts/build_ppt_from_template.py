@@ -421,41 +421,46 @@ def _diagram_to_bullets(diagram):
 
 def _fill_image_slide(slide, title, extra):
     """全幅图片页：标题 + 居中图片 + 说明文字。"""
-    from pptx.util import Inches
     image_path = extra.get("image", "")
     caption = extra.get("caption", "")
 
-    # 找一个大的占位形状放图片
     shapes = list(text_shapes(slide))
     slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+    used_ids = set()
+    img_slot = None
+    title_shape = None
+    caption_shape = None
 
     if slots and image_path:
-        # 最大的形状放图片
         img_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
+        used_ids.add(id(img_slot))
         try:
-            # 在形状位置嵌入图片
             left = img_slot.left
             top = img_slot.top
             width = img_slot.width
             height = img_slot.height
-            # 清空占位文字
             set_text_keep_style(img_slot, "")
-            # 嵌入图片
             slide.shapes.add_picture(image_path, left, top, width, height)
-        except Exception as e:
+        except Exception:
             set_text_keep_style(img_slot, f"【图片：{image_path}】{caption}")
 
-    # 填标题
-    title_shapes = [sh for sh in shapes if sh != img_slot if sh in slots]
-    if title_shapes:
-        set_text_keep_style(title_shapes[0], title)
-
+    # 填标题（取最靠近顶部的占位，避开图片位）
+    cand_titles = [sh for sh in slots if id(sh) not in used_ids]
+    if cand_titles:
+        title_shape = max(cand_titles, key=lambda s: (s.top or 0) * -1)  # top 最小
+        set_text_keep_style(title_shape, title)
+        used_ids.add(id(title_shape))
     # 填说明文字
     if caption:
-        remaining = [sh for sh in slots if sh not in (img_slot, title_shapes[0] if title_shapes else None)]
-        if remaining:
-            set_text_keep_style(remaining[0], caption)
-
+        cand_caps = [sh for sh in slots if id(sh) not in used_ids]
+        if cand_caps:
+            caption_shape = max(cand_caps, key=lambda s: (s.width or 0) * (s.height or 0))
+            set_text_keep_style(caption_shape, caption)
+            used_ids.add(id(caption_shape))
+    # 其余占位清空
+    for sh in slots:
+        if id(sh) not in used_ids:
+            set_text_keep_style(sh, "")
     clear_decor(slide)
     clean_watermarks(slide)
 
@@ -492,9 +497,11 @@ def _fill_chart_slide(slide, title, extra):
     # 找一个大的形状位置放图表
     shapes = list(text_shapes(slide))
     slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+    used_ids = set()
 
     if slots:
         chart_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
+        used_ids.add(id(chart_slot))
         left = chart_slot.left
         top = chart_slot.top
         width = chart_slot.width
@@ -502,11 +509,16 @@ def _fill_chart_slide(slide, title, extra):
         set_text_keep_style(chart_slot, "")
         slide.shapes.add_chart(ct, left, top, width, height, data)
 
-    # 填标题
-    title_shapes = [sh for sh in shapes if sh != chart_slot if sh in slots]
-    if title_shapes:
-        set_text_keep_style(title_shapes[0], title)
-
+    # 填标题（取最靠近顶部的占位）
+    cand_titles = [sh for sh in slots if id(sh) not in used_ids]
+    if cand_titles:
+        title_shape = max(cand_titles, key=lambda s: (s.top or 0) * -1)
+        set_text_keep_style(title_shape, title)
+        used_ids.add(id(title_shape))
+    # 其余占位清空
+    for sh in slots:
+        if id(sh) not in used_ids:
+            set_text_keep_style(sh, "")
     clear_decor(slide)
     clean_watermarks(slide)
 
@@ -526,9 +538,11 @@ def _fill_table_slide(slide, title, extra):
     # 找一个大的形状位置放表格
     shapes = list(text_shapes(slide))
     slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
+    used_ids = set()
 
     if slots:
         table_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
+        used_ids.add(id(table_slot))
         left = table_slot.left
         top = table_slot.top
         width = table_slot.width
@@ -550,11 +564,16 @@ def _fill_table_slide(slide, title, extra):
                 cell = table.cell(i + 1, j)
                 cell.text = str(val)
 
-    # 填标题
-    title_shapes = [sh for sh in shapes if sh != table_slot if sh in slots]
-    if title_shapes:
-        set_text_keep_style(title_shapes[0], title)
-
+    # 填标题（取最靠近顶部的占位）
+    cand_titles = [sh for sh in slots if id(sh) not in used_ids]
+    if cand_titles:
+        title_shape = max(cand_titles, key=lambda s: (s.top or 0) * -1)
+        set_text_keep_style(title_shape, title)
+        used_ids.add(id(title_shape))
+    # 其余占位清空
+    for sh in slots:
+        if id(sh) not in used_ids:
+            set_text_keep_style(sh, "")
     clear_decor(slide)
     clean_watermarks(slide)
 
@@ -990,11 +1009,11 @@ def validate_content_density(data):
     if effective < 10:
         issues.append(f"总页数仅 {effective} 页，建议至少 12 页以保证内容完整")
 
-    # 逐章检查：每页 bullets 数量（图表页由图形承载内容，跳过）
+    # 逐章检查：每页 bullets 数量（图表/图片/表格页由图形承载内容，跳过）
     thin_pages = []
     for ch in chapters:
         for sl in ch.get("slides", []):
-            if sl.get("layout") in DIAGRAM_LAYOUTS:
+            if sl.get("layout") != "text_only":
                 continue
             n_bullets = len(sl.get("bullets", []))
             if n_bullets < 3:
@@ -1050,12 +1069,12 @@ def auto_fix_content_density(data):
             continue
 
         # 修复 1：合并空洞页（text_only 且 bullets < 2 的页合并到前一页；
-        #        图表页由图形承载内容，不合并）
+        #        图表页/图片页/表格页由图形承载内容，一律不合并）
         merged_slides = []
         for sl in slides:
             bullets = sl.get("bullets", [])
-            is_diagram = sl.get("layout") in DIAGRAM_LAYOUTS
-            if (not is_diagram and len(bullets) < 2 and merged_slides):
+            is_visual = sl.get("layout") != "text_only"
+            if (not is_visual and len(bullets) < 2 and merged_slides):
                 prev = merged_slides[-1]
                 prev_bullets = prev.get("bullets", [])
                 prev_bullets.extend(bullets)
@@ -1067,7 +1086,7 @@ def auto_fix_content_density(data):
 
         # 修复 2：精简超长 bullets（超过 25 字的截断；图表页的原文要点不截，留作备注）
         for sl in ch.get("slides", []):
-            if sl.get("layout") in DIAGRAM_LAYOUTS:
+            if sl.get("layout") != "text_only":
                 continue
             bullets = sl.get("bullets", [])
             new_bullets = []

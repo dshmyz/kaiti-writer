@@ -19,6 +19,10 @@
 
 **文档**：一站式收尾.md 更新图表布局 schema 与设计规范（关键页必须上图表）；SKILL.md 脚本清单补 render_diagrams.py 与新 derive 说明。
 
+**真实稿实测后的第二轮修复**（用黄群金融支付稿端到端跑出来的）：
+- derive：extract_bullets 的 bullets 上限提前 break 会漏掉后面的图片/表格块 → 上限只停文字收集、dict 块照常处理；route.json 同目录自动并入（思路文本常用"—"而非"→"）；方法对比行改从原文 items 解析（"1、方法名。说明"句式），不依赖被切碎的 bullets；章节排序改语义 token 匹配（"文献综述"与"国内外研究现状"、"研究框架（内容）"等键名写法不一都能归位）
+- build：auto_fix/自检只合并纯 text_only 页，不再吞掉 image_center/表格页；_fill_image_slide/_fill_chart_slide/_fill_table_slide 清掉未用占位形状（此前路线图页残留"请输入你的观点"）
+
 
 ## 本地补丁（2026-08-29，第二波：合入 WorkBuddy v3.2）
 

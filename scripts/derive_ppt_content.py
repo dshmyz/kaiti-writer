@@ -20,47 +20,52 @@ import json
 import re
 from pathlib import Path
 
-# content_by_section 的键 → PPT chapter 名的映射（按常见顺序）
-SECTION_ORDER = [
-    "（一）研究背景",
-    "（二）选题意义",
-    "（三）国内外研究现状",
-    "研究框架（内容）",
-    "（一）研究思路",
-    "（二）研究方法",
-    "（三）创新之处",
-    "四、学位论文实施计划",
-    "五、预期目标和成果",
+# 章节规范顺序：每个元组 = (规范名, 匹配 token 列表)。键名写法不一（"文献综述"/
+# "国内外研究现状"、"研究框架（内容）"），按含有的 token 归位。
+_SECTION_TOKENS = [
+    ("研究背景", ["研究背景", "问题的提出", "选题背景"]),
+    ("选题意义", ["选题意义", "研究意义"]),
+    ("文献综述", ["文献综述", "国内外研究现状", "国内外现状", "研究现状"]),
+    ("研究框架", ["研究框架", "分析框架"]),
+    ("研究思路", ["研究思路"]),
+    ("研究方法", ["研究方法"]),
+    ("创新之处", ["创新之处", "创新点"]),
+    ("论文大纲", ["论文大纲", "内容安排", "写作安排"]),
+    ("实施计划", ["实施计划", "时间安排", "进度安排", "研究计划"]),
+    ("预期成果", ["预期目标", "预期成果", "预期目标和成果"]),
 ]
 
-SECTION_NAME_ALIAS = {
-    "国内外研究现状": "文献综述",
-    "研究框架（内容）": "研究框架",
-    "（一）研究思路": "研究思路",
-    "（二）研究方法": "研究方法",
-    "（三）创新之处": "创新之处",
-    "四、学位论文实施计划": "实施计划",
-    "五、预期目标和成果": "预期成果",
-}
+
+def _section_rank(key: str) -> int:
+    for i, (canon, toks) in enumerate(_SECTION_TOKENS):
+        if any(t in key for t in toks):
+            return i
+    return len(_SECTION_TOKENS)
 
 
 def clean_section_name(key: str) -> str:
-    """（一）研究背景 → 研究背景"""
+    """（一）研究背景 → 研究背景；命中规范 token 则用规范名。"""
     n = re.sub(r"^[（(一二三四五六七八九十]+[）)]\s*", "", key).strip()
-    return SECTION_NAME_ALIAS.get(n, n)
+    for canon, toks in _SECTION_TOKENS:
+        if any(t in key or t in n for t in toks):
+            return canon
+    return n
 
 
 def extract_bullets(items: list, max_bullets: int = 6) -> tuple[list, list]:
     """从 content_by_section 的值数组中提取文本 bullets 和特殊布局页。
 
     返回 (bullets, special_slides)：
-    - bullets: 普通文字要点
+    - bullets: 普通文字要点（达到上限后停止收集，但不影响后续 dict 块）
     - special_slides: 需要特殊布局的页（图片/图表/表格）
     """
     bullets = []
     special_slides = []
+    bullets_done = False
     for item in items:
         if isinstance(item, str):
+            if bullets_done:
+                continue
             text = item.strip()
             if not text:
                 continue
@@ -71,11 +76,12 @@ def extract_bullets(items: list, max_bullets: int = 6) -> tuple[list, list]:
                     if p and len(p) > 5:
                         bullets.append(p)
                         if len(bullets) >= max_bullets:
+                            bullets_done = True
                             break
             else:
                 bullets.append(text)
                 if len(bullets) >= max_bullets:
-                    break
+                    bullets_done = True
         elif isinstance(item, dict):
             if "image" in item:
                 caption = item.get("caption", "技术路线图")
@@ -95,10 +101,11 @@ def extract_bullets(items: list, max_bullets: int = 6) -> tuple[list, list]:
                     "bullets": [],
                     "extra": {"table_data": {"headers": headers, "rows": rows}}
                 })
-            elif "list" in item:
+            elif "list" in item and not bullets_done:
                 for li in item["list"][:3]:
                     bullets.append(f"● {li}")
                     if len(bullets) >= max_bullets:
+                        bullets_done = True
                         break
             elif "chart" in item:
                 chart_type = item["chart"].get("type", "bar")
@@ -109,8 +116,6 @@ def extract_bullets(items: list, max_bullets: int = 6) -> tuple[list, list]:
                     "bullets": [],
                     "extra": {"chart_type": chart_type, "chart_data": chart_data}
                 })
-        if len(bullets) >= max_bullets:
-            break
     return bullets, special_slides
 
 
@@ -147,10 +152,17 @@ def _route_nodes(content: dict, items: list) -> list | None:
     return None
 
 
-def _plan_gantt(content: dict) -> dict | None:
-    """顶层 plan_table → gantt 数据。plan_table: {headers, rows:[阶段,内容,时间]}。"""
+def _plan_gantt(content: dict, items: list) -> dict | None:
+    """顶层 plan_table 或节内「阶段/内容/时间」表块 → gantt 数据。"""
     pt = content.get("plan_table") or {}
     rows = pt.get("rows") or []
+    if not rows:
+        for it in items:
+            if isinstance(it, dict) and "table" in it:
+                hdrs = it["table"].get("headers") or []
+                if any("时间" in h or "阶段" in h for h in hdrs):
+                    rows = it["table"].get("rows") or []
+                    break
     if not rows:
         return None
     tasks = []
@@ -171,20 +183,53 @@ def _plan_gantt(content: dict) -> dict | None:
 
 
 def _method_rows(bullets: list) -> list | None:
-    """方法节 → 对比表行：拆「方法名：说明」。不足两行则返回 None。"""
+    """方法节 → 对比表行：拆「N、方法名。说明」或「方法名：说明」。不足两行返回 None。"""
     rows = []
     for b in bullets:
         b = re.sub(r"^[●•]\s*", "", b).strip()
-        if "：" in b:
-            name, desc = b.split("：", 1)
-        elif ":" in b:
-            name, desc = b.split(":", 1)
+        b = re.sub(r"^\d+\s*[、.)]\s*", "", b)   # 去掉 "1、" 序号
+        parts = re.split(r"[：:]", b, 1)
+        if len(parts) == 2:
+            name, desc = parts[0].strip(), parts[1].strip()
         else:
+            parts = re.split(r"[。；]", b, 1)
+            if len(parts) == 2:
+                name, desc = parts[0].strip(), parts[1].strip()
+            else:
+                continue
+        # 过滤非方法名（如"上述方法中，…"结尾句）
+        if not name or len(name) > 14 or "上述" in name:
             continue
-        name = name.strip()
-        desc = re.split(r"[。；]", desc.strip())[0][:40]
-        if name:
-            rows.append([name, desc])
+        desc = re.split(r"[。；]", desc)[0][:40]
+        rows.append([name, desc])
+    return rows if len(rows) >= 2 else None
+
+
+def _find_table_items(items: list) -> list:
+    """返回 items 里的 table 块字典列表。"""
+    return [it for it in items if isinstance(it, dict) and "table" in it]
+
+
+def _method_rows_from_items(items: list) -> list | None:
+    """从方法节原文 items 拆对比表行（bullets 已被切碎，须用原文）。"""
+    rows = []
+    for it in items:
+        if not isinstance(it, str):
+            continue
+        b = re.sub(r"^\d+\s*[、.)]\s*", "", it.strip())
+        parts = re.split(r"[。；]", b, 1)
+        if len(parts) == 2:
+            name, desc = parts[0].strip(), parts[1].strip()
+        else:
+            parts = re.split(r"[：:]", b, 1)
+            if len(parts) == 2:
+                name, desc = parts[0].strip(), parts[1].strip()
+            else:
+                continue
+        if not name or len(name) > 14 or "上述" in name:
+            continue
+        desc = re.split(r"[。；]", desc)[0][:40]
+        rows.append([name, desc])
     return rows if len(rows) >= 2 else None
 
 
@@ -246,13 +291,28 @@ def _build_chapter_slides(key: str, name: str, bullets: list, special_slides: li
     slides = []
 
     if _is_plan(key):
-        g = _plan_gantt(content)
+        g = _plan_gantt(content, items)
         if g:
             slides.append(_make_slide("实施计划与时间安排", bullets, "gantt", g))
+            # 该阶段的表块已转成甘特，避免再重复一张表格页
+            special_slides = [sp for sp in special_slides
+                              if sp.get("layout") != "table"]
             slides.extend(special_slides)
             return slides
 
     if _is_route(key):
+        # 研究框架自带表格（如三链×三层矩阵）→ 用表格页，避免与思路页重复 flowchart
+        if "研究框架" in key:
+            tables = _find_table_items(items)
+            if tables:
+                t = tables[0]["table"]
+                slides.append(_make_slide(
+                    name, bullets, "compare",
+                    {"headers": t.get("headers"), "rows": t.get("rows")}))
+                special_slides = [sp for sp in special_slides
+                                  if sp.get("layout") != "table"]
+                slides.extend(special_slides)
+                return slides
         nodes = _route_nodes(content, items)
         if nodes:
             flat = all(isinstance(n, str) for n in nodes) and len(nodes) <= 6
@@ -263,7 +323,7 @@ def _build_chapter_slides(key: str, name: str, bullets: list, special_slides: li
             return slides
 
     if _is_method(key):
-        rows = _method_rows(bullets)
+        rows = _method_rows_from_items(items) or _method_rows(bullets)
         if rows:
             slides.append(_make_slide(
                 "研究方法", bullets, "compare",
@@ -351,10 +411,7 @@ def derive(content: dict) -> dict:
     }
 
     sections = content.get("content_by_section", {})
-    ordered_keys = [k for k in SECTION_ORDER if k in sections]
-    for k in sections:
-        if k not in ordered_keys:
-            ordered_keys.append(k)
+    ordered_keys = sorted(sections, key=_section_rank)
 
     for key in ordered_keys:
         items = sections[key]
@@ -378,6 +435,13 @@ def main():
     a = ap.parse_args()
 
     content = json.loads(a.content.read_text(encoding="utf-8"))
+    # 同目录的 route.json 若存在则并入，供研究思路/框架识别 flow（思路文本常用"—"非"→"）
+    route_path = a.content.parent / "route.json"
+    if route_path.is_file() and "route" not in content:
+        try:
+            content["route"] = json.loads(route_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
     ppt = derive(content)
     a.output.write_text(json.dumps(ppt, ensure_ascii=False, indent=2), encoding="utf-8")
     layouts = [s["layout"] for ch in ppt["chapters"] for s in ch["slides"]]
