@@ -695,7 +695,11 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
 
 # ── 双栏/多栏面板（意义/成果类：理论意义 | 现实意义 等，与卡片页形成版式差异）──
 def _draw_panels(slide, left, top, width, height, data) -> bool:
-    """大面板页：2–4 块并排面板，每块=标题栏 + 正文，用于"理论意义/现实意义"类内容。"""
+    """大面板页：2–4 块并排面板（标题栏 + 正文）。
+
+    面板高度由最长正文决定（不是拉满整页——文字短时面板 80% 是空的），
+    整块在内容区垂直居中；正文放宽到 ~120 字，不再一小截。
+    """
     panels = data.get("panels") or data.get("items") or []
     if isinstance(panels, dict):
         panels = list(panels.values())
@@ -706,26 +710,37 @@ def _draw_panels(slide, left, top, width, height, data) -> bool:
     n = len(panels)
     gap = int(0.035 * width)
     pw = (width - gap * (n - 1)) / n
-    ph = height
-    title_h = int(max(0.16 * ph, 30 * _IN * 0.07))
+    title_h = int(0.42 * _IN)
+    font_pt = 11.5
+    inner_w = int(pw * 0.86)
+    # 内容定高：量每块正文的行数，取最高者；封顶内容区、托底 2.1in
+    text_hs = []
+    for p in panels:
+        lines = _wrap(str(p.get("text", "")), font_pt, inner_w)
+        text_hs.append(len(lines) * font_pt * 1.35 * EMU_PER_PT * 1.45)
+    ph = int(title_h + max(text_hs) + 0.50 * _IN)
+    ph = min(max(ph, int(2.1 * _IN)), height)
+    y0 = int(top + max(0, (height - ph) / 2))
     for i, p in enumerate(panels):
         x = int(left + i * (pw + gap))
-        panel = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, top, int(pw), int(ph),
-                       fill=PALE, line=LINEC, line_w=1.0)
+        panel = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y0, int(pw), int(ph),
+                       fill=PAPER, line=CARDLINE, line_w=0.75)
         try:
-            panel.adjustments[0] = 0.05
+            panel.adjustments[0] = 0.04
         except Exception:
             pass
-        # 标题栏（上色块）
-        tb = _shape(slide, MSO_SHAPE.RECTANGLE, x, top, int(pw), int(title_h),
+        _soft_shadow(panel, blur=45720, dist=15875, alpha=12000)
+        # 标题栏
+        tb = _shape(slide, MSO_SHAPE.RECTANGLE, x, y0, int(pw), title_h,
                     fill=NAVY, line=None)
         _fit_text(tb, str(p.get("title", "")), 14, color=WHITE, bold=True)
         # 正文
         bb = _shape(slide, MSO_SHAPE.RECTANGLE,
-                    x + int(0.06 * pw), top + int(title_h + 0.04 * pw),
-                    int(0.88 * pw), int(ph - title_h - 0.08 * pw), fill=None, line=None)
-        _fit_text(bb, str(p.get("text", "")), 11.5, color=TEXT,
-                  align=PP_ALIGN.LEFT, margin_pct=0.04)
+                    x + int(0.07 * pw), y0 + title_h + int(0.10 * _IN),
+                    int(0.86 * pw), int(ph - title_h - int(0.18 * _IN)),
+                    fill=None, line=None)
+        _fit_text(bb, str(p.get("text", "")), font_pt, color=TEXT,
+                  align=PP_ALIGN.LEFT, margin_pct=0.03)
     return True
 
 

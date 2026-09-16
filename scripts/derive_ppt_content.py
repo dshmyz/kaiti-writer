@@ -228,8 +228,8 @@ def _panels_data(items: list) -> dict | None:
         if not any(title.startswith(p) or p.startswith(title) for p in _PANEL_PREFIXES):
             continue
         text = m.group(2).strip()
-        if len(text) > 56:
-            text = text[:56] + "…"
+        if len(text) > 150:
+            text = text[:150] + "…"
         if title and text:
             panels.append({"title": title, "text": text})
     return {"panels": panels} if len(panels) >= 2 else None

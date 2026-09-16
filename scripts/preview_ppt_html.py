@@ -92,8 +92,9 @@ BASE_CSS = f"""
   .takeaway .tk {{ background:var(--gold); color:#fff; font-size:11px; font-weight:700;
                   padding:3px 10px; border-radius:3px; flex:none; position:relative; }}
   /* 双栏/多栏面板 */
-  .panels {{ display:flex; gap:18px; flex:1; }}
-  .panel {{ flex:1; background:var(--paper); border:1px solid var(--hair); border-radius:10px;
+  .panels {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(0,1fr));
+            gap:18px; align-content:center; align-items:stretch; flex:1; }}
+  .panel {{ background:var(--paper); border:1px solid var(--hair); border-radius:10px;
            overflow:hidden; display:flex; flex-direction:column;
            box-shadow:0 2px 8px rgba(31,45,61,.06); }}
   .panel .pt {{ background:var(--navy); color:#fff; font-size:15px; font-weight:700;
