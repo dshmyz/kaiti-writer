@@ -583,10 +583,13 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
         ch = int(0.32 * _IN)
     font_pt = 12.5 if cols == 1 else 11.0
     accents = [BLUE, NAVY, ACCENT]
+    # 整块卡片在内容区垂直居中：高度封顶后剩余空间上下均分，不留一边倒的空白
+    block_h = rows * ch + (rows - 1) * gap
+    y0 = int(top + max(0, (height - block_h) / 2))
     for i, b in enumerate(items):
         r, c = divmod(i, cols)
         x = int(left + c * (cw + gap))
-        y = int(top + r * (ch + gap))
+        y = int(y0 + r * (ch + gap))
         ac = accents[i % 3]
         # 白卡 + 投影
         card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y, int(cw), int(ch),

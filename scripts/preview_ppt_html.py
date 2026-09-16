@@ -48,9 +48,9 @@ BASE_CSS = f"""
   .foot {{ position:absolute; left:44px; right:44px; bottom:18px; font-size:11px; color:{MUTE};
           display:flex; justify-content:space-between; border-top:1px solid #e2e8ef; padding-top:6px; }}
   .pageno {{ color:{NAVY}; font-weight:700; }}
-  /* 编号卡片：白卡+投影+左胶囊色条+圆形序号，三色轮换；≤4 条单列，>4 条两列 */
-  .cards-wrap {{ display:flex; flex-direction:column; gap:12px; }}
-  .cards-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; align-content:start; }}
+  /* 编号卡片：白卡+投影+左胶囊色条+圆形序号，三色轮换；≤4 条单列，>4 条两列；整块垂直居中 */
+  .cards-wrap {{ display:flex; flex-direction:column; gap:12px; justify-content:center; flex:1; }}
+  .cards-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; align-content:center; flex:1; }}
   .card {{ position:relative; display:flex; gap:13px; background:#fff; border:1px solid #E2E8F0;
           border-radius:10px; padding:11px 16px 11px 20px; align-items:center;
           box-shadow:0 2px 10px rgba(31,45,61,.09); }}
