@@ -578,7 +578,7 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
     rows = math.ceil(n / cols)
     gap = int(0.16 * _IN)
     cw = (width - gap * (cols - 1)) / cols
-    ch = min((height - gap * (rows - 1)) / rows, int(0.95 * _IN))
+    ch = min((height - gap * (rows - 1)) / rows, int(1.30 * _IN))
     if ch < int(0.32 * _IN):
         ch = int(0.32 * _IN)
     font_pt = 12.5 if cols == 1 else 11.0
