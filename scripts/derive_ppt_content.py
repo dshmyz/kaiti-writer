@@ -210,6 +210,41 @@ def _find_table_items(items: list) -> list:
     return [it for it in items if isinstance(it, dict) and "table" in it]
 
 
+_PANEL_PREFIXES = ("理论意义", "现实意义", "前沿性", "必要性",
+                   "预期目标", "预期成果", "风险预案", "预期")
+
+
+def _panels_data(items: list) -> dict | None:
+    """意义/成果类：拆「理论意义：…」式前缀 → 双栏面板。不足两栏返回 None。"""
+    panels = []
+    for it in items:
+        if not isinstance(it, str):
+            continue
+        t = it.strip()
+        m = re.match(r"^([一-龥A-Za-z]{2,8}[：:])\s*(.*)$", t)
+        if not m:
+            continue
+        title = m.group(1)[:-1]
+        if not any(title.startswith(p) or p.startswith(title) for p in _PANEL_PREFIXES):
+            continue
+        text = m.group(2).strip()
+        if len(text) > 56:
+            text = text[:56] + "…"
+        if title and text:
+            panels.append({"title": title, "text": text})
+    return {"panels": panels} if len(panels) >= 2 else None
+
+
+def _outline_table(bullets: list) -> dict | None:
+    """论文大纲节：拆「第一章 绪论：…」→ 章节|内容 表。不足三章返回 None。"""
+    rows = []
+    for b in bullets:
+        m = re.match(r"^(第[一二三四五六七八九十]+章)\s*([^：:：]*?)[：:]\s*(.*)$", b)
+        if m:
+            rows.append([m.group(1) + m.group(2), m.group(3)[:32]])
+    return {"headers": ["章节", "内容"], "rows": rows} if len(rows) >= 3 else None
+
+
 def _method_rows_from_items(items: list) -> list | None:
     """从方法节原文 items 拆对比表行（bullets 已被切碎，须用原文）。"""
     rows = []
@@ -343,17 +378,22 @@ def _build_chapter_slides(key: str, name: str, bullets: list, special_slides: li
             slides.extend(special_slides)
             return slides
 
-    # 兜底：要点卡片页（文字也有视觉焦点——借鉴高分答辩稿的容器化排版，
-    # 不再把条目干巴巴堆在模板框里）
+    # 兜底：按内容挑版式，不千篇一律——意义/成果带前缀 → 双栏面板；
+    # 论文大纲 → 章节表格；其余 → 编号卡片（**一页装下全部**，渲染层自动压紧凑，
+    # 不拆页——换大纲/稿子也不乱结构）
+    panels = _panels_data(items)
+    if panels:
+        slides.append(_make_slide(name, bullets, "panels", panels))
+        slides.extend(special_slides)
+        return slides
+    outline = _outline_table(bullets)
+    if outline:
+        slides.append(_make_slide(name, bullets, "compare", outline))
+        slides.extend(special_slides)
+        return slides
     if bullets:
-        trimmed = [b if len(b) <= 32 else b[:32] + "…" for b in bullets]
-        if len(trimmed) > 6:
-            slides.append(_make_slide(name, trimmed[:6], "cards",
-                                      {"items": trimmed[:6]}))
-            slides.append(_make_slide(f"{name}（续）", trimmed[6:], "cards",
-                                      {"items": trimmed[6:]}))
-        else:
-            slides.append(_make_slide(name, trimmed, "cards", {"items": trimmed}))
+        trimmed = [b if len(b) <= 26 else b[:26] + "…" for b in bullets]
+        slides.append(_make_slide(name, trimmed, "cards", {"items": trimmed}))
     slides.extend(special_slides)
     return slides
 

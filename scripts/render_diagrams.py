@@ -188,6 +188,8 @@ def draw(slide, layout: str, box, data: dict | None):
         return _draw_stats(slide, left, top, width, height, data)
     if layout == "cards":
         return _draw_cards(slide, left, top, width, height, data)
+    if layout == "panels":
+        return _draw_panels(slide, left, top, width, height, data)
     if layout == "compare":
         return _draw_table(slide, left, top, width, height, data, first_col_label=True)
     if layout == "table":
@@ -516,16 +518,18 @@ _IN = 914400
 
 
 def _draw_cards(slide, left, top, width, height, data) -> bool:
-    """要点卡片页：每条要点一张圆角卡 + 序号徽章，替代干巴巴的文字条目。"""
+    """要点卡片页：每条要点一张圆角卡 + 序号徽章。条目多时自动压紧凑，一页装下。"""
     items = data.get("items") or data.get("cards") or data.get("bullets") or []
     items = [str(i) for i in items if str(i).strip()]
     if not items:
         return False
-    items = items[:6]
-    gap = int(0.20 * _IN)
-    ch = min((height - gap * (len(items) - 1)) / len(items), int(1.0 * _IN))
-    if ch < int(0.5 * _IN):
-        ch = int(0.5 * _IN)
+    n = len(items)
+    # 条目多 → 更小的间距与卡片高度（自适应，不拆页）
+    gap = int(0.18 * _IN) if n <= 5 else int(0.10 * _IN)
+    ch = (height - gap * (n - 1)) / n
+    if ch < int(0.30 * _IN):
+        ch = int(0.30 * _IN)          # 兜底最小高度（极少触发）
+    font_pt = 13.0 if n <= 5 else 11.0
     for i, b in enumerate(items):
         y = int(top + i * (ch + gap))
         card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, left, y, width, int(ch),
@@ -535,17 +539,53 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
         except Exception:
             pass
         badge = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                       left + int(0.24 * _IN), y + int(0.22 * _IN),
-                       int(0.5 * _IN), int(0.5 * _IN), fill=NAVY, line=None)
+                       left + int(0.22 * _IN), y + int(0.16 * _IN),
+                       int(0.42 * _IN), int(0.42 * _IN), fill=NAVY, line=None)
         try:
             badge.adjustments[0] = 0.3
         except Exception:
             pass
-        _fit_text(badge, f"{i + 1}", 13, color=WHITE, bold=True)
+        _fit_text(badge, f"{i + 1}", font_pt, color=WHITE, bold=True)
         tb = _shape(slide, MSO_SHAPE.RECTANGLE,
-                    left + int(1.02 * _IN), y, width - int(1.18 * _IN), int(ch),
+                    left + int(0.92 * _IN), y, width - int(1.08 * _IN), int(ch),
                     fill=None, line=None)
-        _fit_text(tb, b, 13, color=TEXT, align=PP_ALIGN.LEFT, margin_pct=0.06)
+        _fit_text(tb, b, font_pt, color=TEXT, align=PP_ALIGN.LEFT, margin_pct=0.05)
+    return True
+
+
+# ── 双栏/多栏面板（意义/成果类：理论意义 | 现实意义 等，与卡片页形成版式差异）──
+def _draw_panels(slide, left, top, width, height, data) -> bool:
+    """大面板页：2–4 块并排面板，每块=标题栏 + 正文，用于"理论意义/现实意义"类内容。"""
+    panels = data.get("panels") or data.get("items") or []
+    if isinstance(panels, dict):
+        panels = list(panels.values())
+    panels = [p if isinstance(p, dict) else {"title": str(p), "text": ""} for p in panels]
+    panels = panels[:4]
+    if not panels:
+        return False
+    n = len(panels)
+    gap = int(0.035 * width)
+    pw = (width - gap * (n - 1)) / n
+    ph = height
+    title_h = int(max(0.16 * ph, 30 * _IN * 0.07))
+    for i, p in enumerate(panels):
+        x = int(left + i * (pw + gap))
+        panel = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, top, int(pw), int(ph),
+                       fill=PALE, line=LINEC, line_w=1.0)
+        try:
+            panel.adjustments[0] = 0.05
+        except Exception:
+            pass
+        # 标题栏（上色块）
+        tb = _shape(slide, MSO_SHAPE.RECTANGLE, x, top, int(pw), int(title_h),
+                    fill=NAVY, line=None)
+        _fit_text(tb, str(p.get("title", "")), 14, color=WHITE, bold=True)
+        # 正文
+        bb = _shape(slide, MSO_SHAPE.RECTANGLE,
+                    x + int(0.06 * pw), top + int(title_h + 0.04 * pw),
+                    int(0.88 * pw), int(ph - title_h - 0.08 * pw), fill=None, line=None)
+        _fit_text(bb, str(p.get("text", "")), 11.5, color=TEXT,
+                  align=PP_ALIGN.LEFT, margin_pct=0.04)
     return True
 
 
