@@ -48,16 +48,24 @@ BASE_CSS = f"""
   .foot {{ position:absolute; left:44px; right:44px; bottom:18px; font-size:11px; color:{MUTE};
           display:flex; justify-content:space-between; border-top:1px solid #e2e8ef; padding-top:6px; }}
   .pageno {{ color:{NAVY}; font-weight:700; }}
-  /* 编号卡片：≤4 条单列；>4 条自动两列网格。卡片自然高度不拉伸，铺不满就留白 */
-  .cards-wrap {{ display:flex; flex-direction:column; gap:10px; }}
-  .cards-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; align-content:start; }}
-  .card {{ display:flex; gap:14px; background:{PALE}; border:1px solid {LINE}; border-radius:8px;
-          padding:10px 16px; align-items:center; }}
-  .card .no {{ width:30px; height:30px; background:{NAVY}; color:#fff; border-radius:7px;
-              font-weight:700; display:flex; align-items:center; justify-content:center; flex:none; font-size:14px; }}
-  .card .txt {{ font-size:13.5px; color:{INK}; line-height:1.45; }}
-  .cards-grid .card {{ padding:8px 14px; }}
-  .cards-grid .card .no {{ width:26px; height:26px; font-size:12.5px; }}
+  /* 编号卡片：白卡+投影+左胶囊色条+圆形序号，三色轮换；≤4 条单列，>4 条两列 */
+  .cards-wrap {{ display:flex; flex-direction:column; gap:12px; }}
+  .cards-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; align-content:start; }}
+  .card {{ position:relative; display:flex; gap:13px; background:#fff; border:1px solid #E2E8F0;
+          border-radius:10px; padding:11px 16px 11px 20px; align-items:center;
+          box-shadow:0 2px 10px rgba(31,45,61,.09); }}
+  .card::before {{ content:""; position:absolute; left:0; top:10px; bottom:10px; width:4px;
+                  border-radius:2px; background:var(--ac); }}
+  .card:nth-child(3n+1) {{ --ac:{BLUE}; }}
+  .card:nth-child(3n+2) {{ --ac:{NAVY}; }}
+  .card:nth-child(3n)   {{ --ac:{GOLD}; }}
+  .card .no {{ width:27px; height:27px; background:var(--ac); color:#fff; border-radius:50%;
+              font-weight:700; display:flex; align-items:center; justify-content:center;
+              flex:none; font-size:13px; }}
+  .card .txt {{ font-size:13.5px; color:{INK}; line-height:1.5; }}
+  .card .txt b {{ color:{NAVY}; }}
+  .cards-grid .card {{ padding:9px 14px 9px 18px; }}
+  .cards-grid .card .no {{ width:25px; height:25px; font-size:12px; }}
   .cards-grid .card .txt {{ font-size:12.5px; }}
   /* 双栏/多栏面板 */
   .panels {{ display:flex; gap:18px; flex:1; }}
@@ -132,6 +140,16 @@ def _month_idx(s: str) -> int | None:
     return int(m.group(1)) * 12 + int(m.group(2))
 
 
+def _card_txt(b) -> str:
+    """卡片正文：「前缀：正文」→ 前缀加粗（前缀 ≤10 字才算）。"""
+    b = str(b)
+    if "：" in b:
+        pre, rest = b.split("：", 1)
+        if 0 < len(pre) <= 10:
+            return f"<b>{ESC(pre)}：</b>{ESC(rest)}"
+    return ESC(b)
+
+
 def _slide_cover(data) -> str:
     cover = data.get("cover", {})
     info = "　".join(
@@ -193,7 +211,7 @@ def _slide_content(title, layout, bullets, extra, page_no, total, footer, tag=""
         cls = "cards-grid" if len(items) > 4 else "cards-wrap"
         cards = "".join(
             f'<div class="card"><div class="no">{i+1}</div>'
-            f'<div class="txt">{ESC(str(b))}</div></div>'
+            f'<div class="txt">{_card_txt(b)}</div></div>'
             for i, b in enumerate(items))
         body = f'<div class="{cls}">{cards}</div>'
     elif layout == "panels":
@@ -235,7 +253,7 @@ def _slide_content(title, layout, bullets, extra, page_no, total, footer, tag=""
         cls = "cards-grid" if len(items) > 4 else "cards-wrap"
         cards = "".join(
             f'<div class="card"><div class="no">{i+1}</div>'
-            f'<div class="txt">{ESC(str(b))}</div></div>'
+            f'<div class="txt">{_card_txt(b)}</div></div>'
             for i, b in enumerate(items))
         body = f'<div class="{cls}">{cards}</div>' if cards else \
             "<div class='card'><div class='txt'>（本页要点待补充）</div></div>"

@@ -29,6 +29,7 @@ LIGHT  = RGBColor(0xDC, 0xE9, 0xF7)   # 浅蓝底
 PALE   = RGBColor(0xEE, 0xF4, 0xFB)   # 极浅底
 GRAY   = RGBColor(0xF2, 0xF2, 0xF2)   # 中性灰底
 LINEC  = RGBColor(0xB9, 0xC8, 0xD9)   # 分隔线
+CARDLINE = RGBColor(0xDD, 0xE5, 0xEE)  # 卡片描边（极浅）
 TEXT   = RGBColor(0x2B, 0x2B, 0x2B)   # 正文深灰
 WHITE  = RGBColor(0xFF, 0xFF, 0xFF)
 ACCENT = RGBColor(0xD9, 0x7E, 0x00)   # 强调·暖橙（仅少量点缀）
@@ -106,8 +107,12 @@ def _wrap(text: str, pt: float, max_w: float) -> list[str]:
 
 def _fit_text(shape, text, pt, color=TEXT, bold=False, min_pt=7.5,
               align=PP_ALIGN.CENTER, line_spacing=1.14, margin_pct=0.08,
-              anchor=MSO_ANCHOR.MIDDLE):
-    """把文字写进形状：溢出则逐步缩字号；返回最终字号。"""
+              anchor=MSO_ANCHOR.MIDDLE, lead=None):
+    """把文字写进形状：溢出则逐步缩字号；返回最终字号。
+
+    lead: (文本, 是否加粗, 颜色)——若首行以该文本开头，则首行拆成两个 run，
+    前段按 lead 样式（用于"理论意义："式前缀加粗），后段按常规样式。
+    """
     tf = shape.text_frame
     tf.word_wrap = True
     tf.vertical_anchor = anchor
@@ -136,10 +141,40 @@ def _fit_text(shape, text, pt, color=TEXT, bold=False, min_pt=7.5,
         para.line_spacing = line_spacing
         para.space_before = Pt(0)
         para.space_after = Pt(0)
-        run = para.add_run()
-        run.text = ln or " "
-        _apply_font(run, pt, bold=bold, color=color)
+        if i == 0 and lead and ln.startswith(lead[0]):
+            r1 = para.add_run()
+            r1.text = lead[0]
+            _apply_font(r1, pt, bold=lead[1], color=lead[2])
+            rest = ln[len(lead[0]):]
+            if rest:
+                r2 = para.add_run()
+                r2.text = rest
+                _apply_font(r2, pt, bold=bold, color=color)
+        else:
+            run = para.add_run()
+            run.text = ln or " "
+            _apply_font(run, pt, bold=bold, color=color)
     return pt
+
+
+def _soft_shadow(shape, blur=50800, dist=19050, alpha=17000):
+    """给形状加柔和投影（PowerPoint/LibreOffice 都渲染 outerShdw）。"""
+    from pptx.oxml.ns import qn
+    from lxml import etree
+    spPr = shape._element.spPr
+    old = spPr.find(qn("a:effectLst"))
+    if old is not None:
+        spPr.remove(old)
+    el = etree.SubElement(spPr, qn("a:effectLst"))
+    shdw = etree.SubElement(el, qn("a:outerShdw"))
+    shdw.set("blurRad", str(blur))
+    shdw.set("dist", str(dist))
+    shdw.set("dir", "5400000")          # 90° 向下
+    shdw.set("rotWithShape", "0")
+    clr = etree.SubElement(shdw, qn("a:srgbClr"))
+    clr.set("val", "1F2D3D")
+    a = etree.SubElement(clr, qn("a:alpha"))
+    a.set("val", str(alpha))
 
 
 def _connector(slide, x1, y1, x2, y2, color=NAVY, width_pt=1.6,
@@ -517,11 +552,21 @@ def _draw_stats(slide, left, top, width, height, data) -> bool:
 _IN = 914400
 
 
+def _split_prefix(text: str) -> tuple[str, str]:
+    """拆「理论意义：正文」式前缀（前缀 ≤10 字才算，避免误伤长句）。"""
+    if "：" in text:
+        pre, rest = text.split("：", 1)
+        if 0 < len(pre) <= 10:
+            return pre + "：", rest
+    return "", text
+
+
 def _draw_cards(slide, left, top, width, height, data) -> bool:
-    """要点卡片页：每条要点一张圆角卡 + 序号徽章。
+    """要点卡片页：白卡 + 柔和投影 + 左侧彩色胶囊条 + 圆形序号 + 前缀加粗。
 
     条目多时不拉伸卡片，而是换两列网格（>4 条 → 2 列）；卡片高度封顶、
     不铺满整页，底部留白——8 条 = 4 行 × 2 列，一页整齐装下。
+    三色轮换（蓝/深蓝/金）形成节奏感。
     """
     import math
     items = data.get("items") or data.get("cards") or data.get("bullets") or []
@@ -533,33 +578,47 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
     rows = math.ceil(n / cols)
     gap = int(0.16 * _IN)
     cw = (width - gap * (cols - 1)) / cols
-    # 卡片高度：由行数算，但封顶 0.95in——不拉伸铺满，宁可留白
     ch = min((height - gap * (rows - 1)) / rows, int(0.95 * _IN))
     if ch < int(0.32 * _IN):
         ch = int(0.32 * _IN)
     font_pt = 12.5 if cols == 1 else 11.0
+    accents = [BLUE, NAVY, ACCENT]
     for i, b in enumerate(items):
         r, c = divmod(i, cols)
         x = int(left + c * (cw + gap))
         y = int(top + r * (ch + gap))
+        ac = accents[i % 3]
+        # 白卡 + 投影
         card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y, int(cw), int(ch),
-                      fill=PALE, line=LINEC, line_w=1.0)
+                      fill=WHITE, line=CARDLINE, line_w=0.75)
         try:
-            card.adjustments[0] = 0.09
+            card.adjustments[0] = 0.10
         except Exception:
             pass
-        badge = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                       x + int(0.2 * _IN), y + int(0.14 * _IN),
-                       int(0.4 * _IN), int(0.4 * _IN), fill=NAVY, line=None)
+        _soft_shadow(card)
+        # 左侧胶囊色条
+        stripe = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
+                        x, y + int(0.10 * _IN), int(0.055 * _IN),
+                        int(max(ch - 0.20 * _IN, 6 * EMU_PER_PT)),
+                        fill=ac, line=None)
         try:
-            badge.adjustments[0] = 0.3
+            stripe.adjustments[0] = 0.5
         except Exception:
             pass
+        # 圆形序号徽章
+        d = int(0.36 * _IN)
+        badge = _shape(slide, MSO_SHAPE.OVAL,
+                       x + int(0.17 * _IN), y + (int(ch) - d) // 2, d, d,
+                       fill=ac, line=None)
         _fit_text(badge, f"{i + 1}", font_pt, color=WHITE, bold=True)
+        # 正文（前缀加粗）
+        pre, _rest = _split_prefix(b)
+        lead = (pre, True, NAVY) if pre else None
         tb = _shape(slide, MSO_SHAPE.RECTANGLE,
-                    x + int(0.86 * _IN), y, int(cw - 1.0 * _IN), int(ch),
+                    x + int(0.68 * _IN), y, int(cw - 0.82 * _IN), int(ch),
                     fill=None, line=None)
-        _fit_text(tb, b, font_pt, color=TEXT, align=PP_ALIGN.LEFT, margin_pct=0.05)
+        _fit_text(tb, b, font_pt, color=TEXT, align=PP_ALIGN.LEFT,
+                  margin_pct=0.04, lead=lead)
     return True
 
 
