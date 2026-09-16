@@ -48,17 +48,17 @@ BASE_CSS = f"""
   .foot {{ position:absolute; left:44px; right:44px; bottom:18px; font-size:11px; color:{MUTE};
           display:flex; justify-content:space-between; border-top:1px solid #e2e8ef; padding-top:6px; }}
   .pageno {{ color:{NAVY}; font-weight:700; }}
-  /* 编号卡片（flex 自动分布，条目多自动压缩，一页装下不溢出） */
-  .cards-wrap {{ display:flex; flex-direction:column; gap:10px; flex:1; }}
-  .cards-wrap.compact {{ gap:6px; }}
+  /* 编号卡片：≤4 条单列；>4 条自动两列网格。卡片自然高度不拉伸，铺不满就留白 */
+  .cards-wrap {{ display:flex; flex-direction:column; gap:10px; }}
+  .cards-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; align-content:start; }}
   .card {{ display:flex; gap:14px; background:{PALE}; border:1px solid {LINE}; border-radius:8px;
-          padding:9px 16px; align-items:center; flex:1; min-height:0; }}
+          padding:10px 16px; align-items:center; }}
   .card .no {{ width:30px; height:30px; background:{NAVY}; color:#fff; border-radius:7px;
               font-weight:700; display:flex; align-items:center; justify-content:center; flex:none; font-size:14px; }}
   .card .txt {{ font-size:13.5px; color:{INK}; line-height:1.45; }}
-  .cards-wrap.compact .card {{ padding:6px 14px; }}
-  .cards-wrap.compact .card .no {{ width:24px; height:24px; font-size:12px; }}
-  .cards-wrap.compact .card .txt {{ font-size:12px; line-height:1.4; }}
+  .cards-grid .card {{ padding:8px 14px; }}
+  .cards-grid .card .no {{ width:26px; height:26px; font-size:12.5px; }}
+  .cards-grid .card .txt {{ font-size:12.5px; }}
   /* 双栏/多栏面板 */
   .panels {{ display:flex; gap:18px; flex:1; }}
   .panel {{ flex:1; background:{PALE}; border:1px solid {LINE}; border-radius:10px; overflow:hidden;
@@ -190,7 +190,7 @@ def _slide_content(title, layout, bullets, extra, page_no, total, footer, tag=""
         body = f'<div class="stats">{cards}</div>'
     elif layout == "cards":
         items = (extra or {}).get("items") or bullets or []
-        cls = "cards-wrap compact" if len(items) > 5 else "cards-wrap"
+        cls = "cards-grid" if len(items) > 4 else "cards-wrap"
         cards = "".join(
             f'<div class="card"><div class="no">{i+1}</div>'
             f'<div class="txt">{ESC(str(b))}</div></div>'
@@ -232,7 +232,7 @@ def _slide_content(title, layout, bullets, extra, page_no, total, footer, tag=""
         body = f'<div class="imgwrap">{imgtag}</div>' + (f'<div class="cap">{ESC(cap)}</div>' if cap else "")
     else:
         items = bullets or []
-        cls = "cards-wrap compact" if len(items) > 5 else "cards-wrap"
+        cls = "cards-grid" if len(items) > 4 else "cards-wrap"
         cards = "".join(
             f'<div class="card"><div class="no">{i+1}</div>'
             f'<div class="txt">{ESC(str(b))}</div></div>'

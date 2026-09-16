@@ -518,36 +518,46 @@ _IN = 914400
 
 
 def _draw_cards(slide, left, top, width, height, data) -> bool:
-    """要点卡片页：每条要点一张圆角卡 + 序号徽章。条目多时自动压紧凑，一页装下。"""
+    """要点卡片页：每条要点一张圆角卡 + 序号徽章。
+
+    条目多时不拉伸卡片，而是换两列网格（>4 条 → 2 列）；卡片高度封顶、
+    不铺满整页，底部留白——8 条 = 4 行 × 2 列，一页整齐装下。
+    """
+    import math
     items = data.get("items") or data.get("cards") or data.get("bullets") or []
     items = [str(i) for i in items if str(i).strip()]
     if not items:
         return False
     n = len(items)
-    # 条目多 → 更小的间距与卡片高度（自适应，不拆页）
-    gap = int(0.18 * _IN) if n <= 5 else int(0.10 * _IN)
-    ch = (height - gap * (n - 1)) / n
-    if ch < int(0.30 * _IN):
-        ch = int(0.30 * _IN)          # 兜底最小高度（极少触发）
-    font_pt = 13.0 if n <= 5 else 11.0
+    cols = 2 if n > 4 else 1
+    rows = math.ceil(n / cols)
+    gap = int(0.16 * _IN)
+    cw = (width - gap * (cols - 1)) / cols
+    # 卡片高度：由行数算，但封顶 0.95in——不拉伸铺满，宁可留白
+    ch = min((height - gap * (rows - 1)) / rows, int(0.95 * _IN))
+    if ch < int(0.32 * _IN):
+        ch = int(0.32 * _IN)
+    font_pt = 12.5 if cols == 1 else 11.0
     for i, b in enumerate(items):
-        y = int(top + i * (ch + gap))
-        card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, left, y, width, int(ch),
+        r, c = divmod(i, cols)
+        x = int(left + c * (cw + gap))
+        y = int(top + r * (ch + gap))
+        card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y, int(cw), int(ch),
                       fill=PALE, line=LINEC, line_w=1.0)
         try:
             card.adjustments[0] = 0.09
         except Exception:
             pass
         badge = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                       left + int(0.22 * _IN), y + int(0.16 * _IN),
-                       int(0.42 * _IN), int(0.42 * _IN), fill=NAVY, line=None)
+                       x + int(0.2 * _IN), y + int(0.14 * _IN),
+                       int(0.4 * _IN), int(0.4 * _IN), fill=NAVY, line=None)
         try:
             badge.adjustments[0] = 0.3
         except Exception:
             pass
         _fit_text(badge, f"{i + 1}", font_pt, color=WHITE, bold=True)
         tb = _shape(slide, MSO_SHAPE.RECTANGLE,
-                    left + int(0.92 * _IN), y, width - int(1.08 * _IN), int(ch),
+                    x + int(0.86 * _IN), y, int(cw - 1.0 * _IN), int(ch),
                     fill=None, line=None)
         _fit_text(tb, b, font_pt, color=TEXT, align=PP_ALIGN.LEFT, margin_pct=0.05)
     return True
