@@ -562,11 +562,12 @@ def _split_prefix(text: str) -> tuple[str, str]:
 
 
 def _draw_cards(slide, left, top, width, height, data) -> bool:
-    """要点卡片页：白卡 + 柔和投影 + 左侧彩色胶囊条 + 圆形序号 + 前缀加粗。
+    """要点卡片页——构图随条数变化，避免千篇一律：
 
-    条目多时不拉伸卡片，而是换两列网格（>4 条 → 2 列）；卡片高度封顶、
-    不铺满整页，底部留白——8 条 = 4 行 × 2 列，一页整齐装下。
-    三色轮换（蓝/深蓝/金）形成节奏感。
+    - 2 条：两块大磁贴（超大浅色序号 + 底部色条 + 正文）
+    - ≥3 条：卡片网格 + 底部「核心要点」深蓝横条（整页视觉锚点）
+    - 卡片：白底+投影+左胶囊色条+圆形序号+前缀加粗；>4 条自动两列
+    - 卡片高度撑满内容区（上限 1.3in），不留大片底部空白
     """
     import math
     items = data.get("items") or data.get("cards") or data.get("bullets") or []
@@ -574,24 +575,62 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
     if not items:
         return False
     n = len(items)
-    cols = 2 if n > 4 else 1
-    rows = math.ceil(n / cols)
     gap = int(0.16 * _IN)
+    accents = [BLUE, NAVY, ACCENT]
+
+    # ── 2 条：大磁贴构图 ──
+    if n == 2:
+        tw = (width - gap) / 2
+        th = min(height, int(2.9 * _IN))
+        y0 = int(top + max(0, (height - th) / 2))
+        for i, b in enumerate(items):
+            x = int(left + i * (tw + gap))
+            tile = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y0,
+                          int(tw), int(th), fill=WHITE, line=CARDLINE, line_w=0.75)
+            try:
+                tile.adjustments[0] = 0.06
+            except Exception:
+                pass
+            _soft_shadow(tile)
+            ghost = _shape(slide, MSO_SHAPE.RECTANGLE, x + int(0.3 * _IN),
+                           y0 + int(0.22 * _IN), int(2.2 * _IN), int(1.0 * _IN),
+                           fill=None, line=None)
+            _fit_text(ghost, f"{i + 1:02d}", 46, color=LIGHT, bold=True,
+                      align=PP_ALIGN.LEFT, margin_pct=0.02, anchor=MSO_ANCHOR.TOP)
+            pre, _rest = _split_prefix(b)
+            lead = (pre, True, NAVY) if pre else None
+            tb = _shape(slide, MSO_SHAPE.RECTANGLE, x + int(0.3 * _IN),
+                        y0 + int(1.28 * _IN), int(tw - 0.6 * _IN),
+                        int(th - 1.5 * _IN), fill=None, line=None)
+            _fit_text(tb, b, 13.5, color=TEXT, align=PP_ALIGN.LEFT,
+                      margin_pct=0.04, lead=lead)
+            _shape(slide, MSO_SHAPE.RECTANGLE, x + int(0.3 * _IN),
+                   y0 + th - int(0.16 * _IN), int(0.9 * _IN), int(0.05 * _IN),
+                   fill=accents[i % 3], line=None)
+        return True
+
+    # ── ≥3 条：网格 + 底部核心横条 ──
+    has_takeaway = n >= 3
+    bar_h = int(0.62 * _IN) if has_takeaway else 0
+    grid_items = items[:-1] if has_takeaway else items
+    grid_h = height - bar_h - (gap if has_takeaway else 0)
+    m = len(grid_items)
+    if m == 0:
+        return False
+    cols = 2 if m > 4 else 1
+    rows = math.ceil(m / cols)
     cw = (width - gap * (cols - 1)) / cols
-    ch = min((height - gap * (rows - 1)) / rows, int(1.30 * _IN))
+    ch = min((grid_h - gap * (rows - 1)) / rows, int(1.30 * _IN))
     if ch < int(0.32 * _IN):
         ch = int(0.32 * _IN)
-    font_pt = 12.5 if cols == 1 else 11.0
-    accents = [BLUE, NAVY, ACCENT]
-    # 整块卡片在内容区垂直居中：高度封顶后剩余空间上下均分，不留一边倒的空白
     block_h = rows * ch + (rows - 1) * gap
-    y0 = int(top + max(0, (height - block_h) / 2))
-    for i, b in enumerate(items):
+    y0 = int(top + max(0, (grid_h - block_h) / 2))
+    font_pt = 12.5 if cols == 1 else 11.0
+    for i, b in enumerate(grid_items):
         r, c = divmod(i, cols)
         x = int(left + c * (cw + gap))
         y = int(y0 + r * (ch + gap))
         ac = accents[i % 3]
-        # 白卡 + 投影
         card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y, int(cw), int(ch),
                       fill=WHITE, line=CARDLINE, line_w=0.75)
         try:
@@ -599,7 +638,6 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
         except Exception:
             pass
         _soft_shadow(card)
-        # 左侧胶囊色条
         stripe = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
                         x, y + int(0.10 * _IN), int(0.055 * _IN),
                         int(max(ch - 0.20 * _IN, 6 * EMU_PER_PT)),
@@ -608,13 +646,11 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
             stripe.adjustments[0] = 0.5
         except Exception:
             pass
-        # 圆形序号徽章
         d = int(0.36 * _IN)
         badge = _shape(slide, MSO_SHAPE.OVAL,
                        x + int(0.17 * _IN), y + (int(ch) - d) // 2, d, d,
                        fill=ac, line=None)
         _fit_text(badge, f"{i + 1}", font_pt, color=WHITE, bold=True)
-        # 正文（前缀加粗）
         pre, _rest = _split_prefix(b)
         lead = (pre, True, NAVY) if pre else None
         tb = _shape(slide, MSO_SHAPE.RECTANGLE,
@@ -622,6 +658,23 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
                     fill=None, line=None)
         _fit_text(tb, b, font_pt, color=TEXT, align=PP_ALIGN.LEFT,
                   margin_pct=0.04, lead=lead)
+    if has_takeaway:
+        by = int(top + height - bar_h)
+        bar = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, left, by, width, bar_h,
+                     fill=NAVY, line=None)
+        try:
+            bar.adjustments[0] = 0.28
+        except Exception:
+            pass
+        _soft_shadow(bar, blur=45720, dist=15875, alpha=20000)
+        pill = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
+                      left + int(0.2 * _IN), by + (bar_h - int(0.34 * _IN)) // 2,
+                      int(0.88 * _IN), int(0.34 * _IN), fill=ACCENT, line=None)
+        _fit_text(pill, "核心要点", 9.5, color=WHITE, bold=True)
+        tb = _shape(slide, MSO_SHAPE.RECTANGLE, left + int(1.25 * _IN), by,
+                    width - int(1.45 * _IN), bar_h, fill=None, line=None)
+        _fit_text(tb, items[-1], 12.5, color=WHITE, bold=True,
+                  align=PP_ALIGN.LEFT, margin_pct=0.03)
     return True
 
 

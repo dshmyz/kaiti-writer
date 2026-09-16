@@ -382,11 +382,28 @@ def _select_title_and_content(slots, slide_height):
     return title_shape, content_shape
 
 
+def _iter_all_shapes(container):
+    """递归遍历所有形状（含组合内部、含空文本框）。"""
+    for sh in container.shapes:
+        if sh.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _iter_all_shapes(sh)
+        else:
+            yield sh
+
+
+def _remove_shape(sh):
+    el = sh._element
+    parent = el.getparent()
+    if parent is not None:
+        parent.remove(el)
+
+
 def _fill_diagram_slide(slide, title, diagram, layout, slide_size):
     """图表页：清空模板内容区占位文字，在标题下方的整块区域画原生图形。
 
     保留模板页的背景/标题栏设计，用 render_diagrams.draw 画流程图/甘特/大数字等。
-    画不出（数据缺）则降级为文字要点页。
+    画不出（数据缺）则降级为文字要点页。绘制成功后把内容区里被清空的
+    占位框整个删除——空框轮廓会和原生图形叠出"幽灵轮廓"。
     """
     SW, SH = slide_size or (12192000, 6858000)
     from pptx.util import Emu
@@ -405,7 +422,20 @@ def _fill_diagram_slide(slide, title, diagram, layout, slide_size):
     left = int(SW * 0.07)
     width = SW - 2 * left
     height = SH - top - int(SH * 0.05)
-    if not draw_diagram(slide, layout, (left, top, width, height), diagram):
+    # 绘制前的形状元素快照：清理时只删"本来就存在"的空文本占位框，
+    # 不能误伤 render_diagrams 新画的图形（自绘形状的文本框同样是空的）
+    before = {sh._element for sh in _iter_all_shapes(slide)}
+    if draw_diagram(slide, layout, (left, top, width, height), diagram):
+        for sh in list(_iter_all_shapes(slide)):
+            if sh._element not in before:
+                continue
+            if sh is tshape or not getattr(sh, "has_text_frame", False):
+                continue
+            if sh.text_frame.text.strip():
+                continue
+            if (sh.top or 0) >= top - int(SH * 0.02):
+                _remove_shape(sh)
+    else:
         # 数据不足，降级为文字页
         bullets = _diagram_to_bullets(diagram)
         fill_content(slide, title, bullets, "text_only", slide_size=slide_size)

@@ -69,6 +69,21 @@ BASE_CSS = f"""
   .cards-grid .card {{ padding:9px 14px 9px 18px; }}
   .cards-grid .card .no {{ width:25px; height:25px; font-size:12px; }}
   .cards-grid .card .txt {{ font-size:12.5px; }}
+  /* 两块大磁贴（恰好 2 条要点时） */
+  .tiles {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; flex:1; }}
+  .tile {{ background:#fff; border:1px solid #E2E8F0; border-radius:12px;
+          box-shadow:0 2px 10px rgba(31,45,61,.09); padding:18px 22px 16px;
+          display:flex; flex-direction:column; }}
+  .tile .ghost {{ font-size:58px; font-weight:800; color:{LIGHT}; line-height:1; }}
+  .tile .tt {{ margin-top:auto; font-size:14px; color:{INK}; line-height:1.55; }}
+  .tile .tt b {{ color:{NAVY}; }}
+  .tile .ubar {{ width:64px; height:4px; border-radius:2px; background:var(--ac); margin-top:10px; }}
+  /* 底部「核心要点」深蓝横条 */
+  .takeaway {{ background:{NAVY}; color:#fff; border-radius:10px; padding:11px 18px;
+              display:flex; align-items:center; gap:12px; font-size:14px; font-weight:700;
+              box-shadow:0 2px 10px rgba(31,45,61,.18); }}
+  .takeaway .tk {{ background:{GOLD}; color:#fff; font-size:11px; font-weight:700;
+                  padding:3px 10px; border-radius:20px; flex:none; }}
   /* 双栏/多栏面板 */
   .panels {{ display:flex; gap:18px; flex:1; }}
   .panel {{ flex:1; background:{PALE}; border:1px solid {LINE}; border-radius:10px; overflow:hidden;
@@ -210,12 +225,27 @@ def _slide_content(title, layout, bullets, extra, page_no, total, footer, tag=""
         body = f'<div class="stats">{cards}</div>'
     elif layout == "cards":
         items = (extra or {}).get("items") or bullets or []
-        cls = "cards-grid" if len(items) > 4 else "cards-wrap"
-        cards = "".join(
-            f'<div class="card"><div class="no">{i+1}</div>'
-            f'<div class="txt">{_card_txt(b)}</div></div>'
-            for i, b in enumerate(items))
-        body = f'<div class="{cls}">{cards}</div>'
+        parts = []
+        if len(items) == 2:
+            tiles = "".join(
+                f'<div class="tile" style="--ac:{[BLUE, NAVY, GOLD][i % 3]}">'
+                f'<div class="ghost">{i+1:02d}</div>'
+                f'<div class="tt">{_card_txt(b)}</div><div class="ubar"></div></div>'
+                for i, b in enumerate(items))
+            parts.append(f'<div class="tiles">{tiles}</div>')
+        else:
+            grid_items = items[:-1] if len(items) >= 3 else items
+            if grid_items:
+                cls = "cards-grid" if len(grid_items) > 4 else "cards-wrap"
+                cards = "".join(
+                    f'<div class="card"><div class="no">{i+1}</div>'
+                    f'<div class="txt">{_card_txt(b)}</div></div>'
+                    for i, b in enumerate(grid_items))
+                parts.append(f'<div class="{cls}">{cards}</div>')
+            if len(items) >= 3:
+                parts.append(f'<div class="takeaway"><span class="tk">核心要点</span>'
+                             f'<span>{_card_txt(items[-1])}</span></div>')
+        body = "".join(parts)
     elif layout == "panels":
         panels = (extra or {}).get("panels") or []
         p = "".join(
