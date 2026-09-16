@@ -20,107 +20,128 @@ from pathlib import Path
 ESC = html.escape
 
 
-# ── 各版式的 HTML 片段（北航蓝 + 金色点缀，与 render_diagrams 同源配色）──
+# ── 各版式的 HTML 片段（"批注过的图纸"：纸白 + 双阶蓝 + 赭金批注）──
 NAVY = "#003366"
 BLUE = "#005BAC"
 LIGHT = "#DCE9F7"
 PALE = "#EEF4FB"
-LINE = "#B9C8D9"
+LINE = "#C9D6E6"
+PAPER = "#FBFCFE"
 INK = "#2B2B2B"
 MUTE = "#6B7A8C"
-GOLD = "#C89A4B"
+GOLD = "#B98A2F"
 
 BASE_CSS = f"""
   * {{ margin:0; padding:0; box-sizing:border-box; }}
-  body {{ background:#e9edf2; font-family:"Microsoft YaHei","PingFang SC",sans-serif; }}
+  :root {{ --navy:{NAVY}; --blue:{BLUE}; --hair:{LINE}; --paper:{PAPER};
+          --gold:{GOLD}; --ink:{INK}; --mute:{MUTE}; }}
+  body {{ background:#E8EDF4; font-family:"Microsoft YaHei","PingFang SC",sans-serif; }}
+  .serif {{ font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; }}
   .deck {{ max-width:1080px; margin:0 auto; padding:28px 0 60px; }}
-  .deck-title {{ color:{NAVY}; font-size:22px; font-weight:700; padding:6px 12px 14px; }}
+  .deck-title {{ color:var(--navy); font-size:21px; font-weight:700;
+                font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif;
+                padding:6px 12px 14px; }}
   .slide {{ width:960px; height:540px; margin:14px auto; background:#fff; border-radius:10px;
            box-shadow:0 4px 18px rgba(0,0,0,.10); position:relative; overflow:hidden;
            display:flex; flex-direction:column; }}
-  .band {{ height:14px; background:{NAVY}; }}
-  .band::after {{ content:""; display:block; height:4px; background:{GOLD}; }}
+  .band {{ height:14px; background:var(--navy); }}
+  .band::after {{ content:""; display:block; height:3px; background:var(--gold); }}
   .hd {{ padding:10px 44px 4px; }}
-  .hd .tag {{ color:{BLUE}; font-size:12px; font-weight:700; }}
-  .hd .title {{ color:{INK}; font-size:24px; font-weight:700; margin-top:2px; }}
-  .hd .gold {{ width:54px; height:4px; background:{GOLD}; margin-top:6px; }}
+  .hd .tag {{ color:var(--blue); font-size:12px; font-weight:700; letter-spacing:.06em; }}
+  .hd .title {{ color:var(--ink); font-size:25px; font-weight:700; margin-top:2px;
+               font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; }}
+  .hd .gold {{ width:54px; height:3px; background:var(--gold); margin-top:7px; }}
   .body {{ flex:1; padding:10px 44px 30px; display:flex; flex-direction:column; }}
-  .foot {{ position:absolute; left:44px; right:44px; bottom:18px; font-size:11px; color:{MUTE};
+  .foot {{ position:absolute; left:44px; right:44px; bottom:18px; font-size:11px; color:var(--mute);
           display:flex; justify-content:space-between; border-top:1px solid #e2e8ef; padding-top:6px; }}
-  .pageno {{ color:{NAVY}; font-weight:700; }}
-  /* 编号卡片：白卡+投影+左胶囊色条+圆形序号，三色轮换；≤4 条单列，>4 条两列；撑满内容区不留大空白 */
+  .pageno {{ color:var(--navy); font-weight:700; }}
+  /* 编号卡片 = 索引卡：纸白 + 发丝边 + 左侧靛青细线 + 细环序号；三色轮换已废除 */
   .cards-wrap {{ display:flex; flex-direction:column; gap:12px; flex:1; }}
   .cards-wrap .card {{ flex:1; min-height:0; }}
   .cards-grid {{ display:grid; grid-template-columns:1fr 1fr; grid-auto-rows:minmax(0,1fr);
                 gap:12px 16px; flex:1; }}
-  .card {{ position:relative; display:flex; gap:13px; background:#fff; border:1px solid #E2E8F0;
-          border-radius:10px; padding:11px 16px 11px 20px; align-items:center;
-          box-shadow:0 2px 10px rgba(31,45,61,.09); }}
-  .card::before {{ content:""; position:absolute; left:0; top:10px; bottom:10px; width:4px;
-                  border-radius:2px; background:var(--ac); }}
-  .card:nth-child(3n+1) {{ --ac:{BLUE}; }}
-  .card:nth-child(3n+2) {{ --ac:{NAVY}; }}
-  .card:nth-child(3n)   {{ --ac:{GOLD}; }}
-  .card .no {{ width:27px; height:27px; background:var(--ac); color:#fff; border-radius:50%;
-              font-weight:700; display:flex; align-items:center; justify-content:center;
-              flex:none; font-size:13px; }}
-  .card .txt {{ font-size:13.5px; color:{INK}; line-height:1.5; }}
-  .card .txt b {{ color:{NAVY}; }}
+  .card {{ position:relative; display:flex; gap:14px; background:var(--paper);
+          border:1px solid var(--hair); border-radius:8px; padding:11px 16px 11px 20px;
+          align-items:center; box-shadow:0 2px 8px rgba(31,45,61,.07); }}
+  .card::before {{ content:""; position:absolute; left:0; top:10px; bottom:10px; width:3px;
+                  border-radius:2px; background:var(--blue); }}
+  .card .no {{ width:26px; height:26px; background:#fff; border:1.5px solid var(--blue);
+              color:var(--navy); border-radius:50%; font-weight:700; display:flex;
+              align-items:center; justify-content:center; flex:none; font-size:12.5px; }}
+  .card .txt {{ font-size:13.5px; color:var(--ink); line-height:1.5; }}
+  .card .txt b {{ color:var(--navy); }}
   .cards-grid .card {{ padding:9px 14px 9px 18px; }}
-  .cards-grid .card .no {{ width:25px; height:25px; font-size:12px; }}
+  .cards-grid .card .no {{ width:24px; height:24px; font-size:11.5px; }}
   .cards-grid .card .txt {{ font-size:12.5px; }}
   /* 两块大磁贴（恰好 2 条要点时） */
   .tiles {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; flex:1; }}
-  .tile {{ background:#fff; border:1px solid #E2E8F0; border-radius:12px;
-          box-shadow:0 2px 10px rgba(31,45,61,.09); padding:18px 22px 16px;
+  .tile {{ background:var(--paper); border:1px solid var(--hair); border-radius:10px;
+          box-shadow:0 2px 10px rgba(31,45,61,.08); padding:18px 22px 16px;
           display:flex; flex-direction:column; }}
-  .tile .ghost {{ font-size:58px; font-weight:800; color:{LIGHT}; line-height:1; }}
-  .tile .tt {{ margin-top:auto; font-size:14px; color:{INK}; line-height:1.55; }}
-  .tile .tt b {{ color:{NAVY}; }}
-  .tile .ubar {{ width:64px; height:4px; border-radius:2px; background:var(--ac); margin-top:10px; }}
-  /* 底部「核心要点」深蓝横条 */
-  .takeaway {{ background:{NAVY}; color:#fff; border-radius:10px; padding:11px 18px;
-              display:flex; align-items:center; gap:12px; font-size:14px; font-weight:700;
-              box-shadow:0 2px 10px rgba(31,45,61,.18); }}
-  .takeaway .tk {{ background:{GOLD}; color:#fff; font-size:11px; font-weight:700;
-                  padding:3px 10px; border-radius:20px; flex:none; }}
+  .tile .ghost {{ font-size:56px; font-weight:800; color:var(--hair); line-height:1;
+                 font-family:Georgia,"Times New Roman",serif; }}
+  .tile .tt {{ margin-top:auto; font-size:14px; color:var(--ink); line-height:1.55; }}
+  .tile .tt b {{ color:var(--navy); }}
+  .tile .ubar {{ width:64px; height:3px; border-radius:2px; background:var(--blue); margin-top:10px; }}
+  /* 结论条 = 图纸标题块：墨蓝底 + 赭金内衬细线 + 戳记 */
+  .takeaway {{ position:relative; background:var(--navy); color:#fff; border-radius:8px;
+              padding:11px 18px; display:flex; align-items:center; gap:12px;
+              font-size:14px; font-weight:700; box-shadow:0 2px 10px rgba(11,40,80,.22); }}
+  .takeaway::after {{ content:""; position:absolute; inset:4px; border:1px solid rgba(185,138,47,.85);
+                     border-radius:5px; pointer-events:none; }}
+  .takeaway .tk {{ background:var(--gold); color:#fff; font-size:11px; font-weight:700;
+                  padding:3px 10px; border-radius:3px; flex:none; position:relative; }}
   /* 双栏/多栏面板 */
   .panels {{ display:flex; gap:18px; flex:1; }}
-  .panel {{ flex:1; background:{PALE}; border:1px solid {LINE}; border-radius:10px; overflow:hidden;
-           display:flex; flex-direction:column; }}
-  .panel .pt {{ background:{NAVY}; color:#fff; font-size:15px; font-weight:700; padding:12px 14px; }}
-  .panel .pb {{ font-size:13px; color:{INK}; line-height:1.6; padding:14px 16px; }}
-  /* 大数字 */
-  .stats {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; flex:1; align-content:center; }}
-  .stat {{ background:{PALE}; border:1px solid {LINE}; border-radius:10px; text-align:center;
-          padding:22px 10px; }}
-  .stat .num {{ font-size:44px; font-weight:800; color:{NAVY}; }}
-  .stat .lbl {{ font-size:12.5px; color:{MUTE}; margin-top:6px; line-height:1.4; }}
-  /* 表格 */
+  .panel {{ flex:1; background:var(--paper); border:1px solid var(--hair); border-radius:10px;
+           overflow:hidden; display:flex; flex-direction:column;
+           box-shadow:0 2px 8px rgba(31,45,61,.06); }}
+  .panel .pt {{ background:var(--navy); color:#fff; font-size:15px; font-weight:700;
+               padding:12px 14px; }}
+  .panel .pb {{ font-size:13px; color:var(--ink); line-height:1.6; padding:14px 16px; }}
+  /* 三线表 = 铺在衬纸上的学术表 */
+  .sheet {{ background:var(--paper); border:1px solid var(--hair); border-radius:8px;
+           box-shadow:0 2px 10px rgba(31,45,61,.08); padding:8px 14px; }}
   table {{ width:100%; border-collapse:collapse; font-size:13px; }}
-  th {{ background:{NAVY}; color:#fff; padding:9px 10px; text-align:left; font-weight:700; }}
-  td {{ border:1px solid #fff; padding:8px 10px; color:{INK}; vertical-align:top; }}
-  tr:nth-child(even) td {{ background:{PALE}; }}
-  tr:nth-child(odd) td {{ background:#f7f9fc; }}
-  /* 流程图 */
-  .flow {{ display:flex; flex-direction:column; gap:6px; flex:1; justify-content:center; }}
+  th {{ background:none; color:var(--navy); padding:10px 10px; text-align:left;
+       font-weight:700; border-top:2.5px solid var(--navy); border-bottom:1.2px solid var(--navy); }}
+  td {{ border:none; border-bottom:.75px solid #DCE4EE; padding:9px 10px; color:var(--ink);
+       vertical-align:top; background:none; }}
+  tr:last-child td {{ border-bottom:2.5px solid var(--navy); }}
+  /* 大数字 + 尺寸标注线（签名元素） */
+  .stats {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; flex:1; align-content:center; }}
+  .stat {{ background:var(--paper); border:1px solid var(--hair); border-radius:10px;
+          text-align:center; padding:24px 10px 18px; box-shadow:0 2px 8px rgba(31,45,61,.06); }}
+  .stat .num {{ font-size:46px; font-weight:800; color:var(--navy);
+               font-family:Georgia,"Noto Serif SC","Songti SC",serif; letter-spacing:.01em; }}
+  .stat .dim {{ width:56%; height:2px; background:var(--hair); margin:10px auto 0;
+               position:relative; }}
+  .stat .dim::before, .stat .dim::after {{ content:""; position:absolute; top:-3px;
+      width:2px; height:8px; background:var(--gold); }}
+  .stat .dim::before {{ left:0; }}
+  .stat .dim::after {{ right:0; }}
+  .stat .lbl {{ font-size:12.5px; color:var(--mute); margin-top:9px; line-height:1.4; }}
+  /* 流程图：纸白框 + 发丝蓝边 */
+  .flow {{ display:flex; flex-direction:column; gap:5px; flex:1; justify-content:center; }}
   .flow .row {{ display:flex; justify-content:center; gap:16px; align-items:center; }}
-  .fbox {{ background:{LIGHT}; border:2px solid {NAVY}; border-radius:8px; padding:10px 14px;
-          font-size:14px; font-weight:700; color:{NAVY}; text-align:center; }}
-  .arrow {{ text-align:center; color:{NAVY}; font-size:16px; line-height:1; }}
-  /* 甘特 */
+  .fbox {{ background:var(--paper); border:1.5px solid var(--navy); border-radius:7px;
+          padding:10px 14px; font-size:14px; font-weight:700; color:var(--navy);
+          text-align:center; }}
+  .arrow {{ text-align:center; color:var(--navy); font-size:15px; line-height:1; }}
+  /* 甘特 = 绘图坐标纸 */
   .gantt {{ display:flex; flex-direction:column; gap:8px; flex:1; }}
   .grow {{ display:grid; grid-template-columns:200px 1fr; align-items:center; gap:10px; }}
-  .grow .phase {{ font-size:12.5px; font-weight:700; color:{NAVY}; text-align:right; }}
-  .track {{ position:relative; height:26px; background:#f0f4f9; border-radius:6px; }}
-  .bar {{ position:absolute; top:3px; bottom:3px; border-radius:5px; background:{BLUE};
+  .grow .phase {{ font-size:12.5px; font-weight:700; color:var(--navy); text-align:right; }}
+  .track {{ position:relative; height:26px; background:#F1F5FA; border-radius:3px;
+           border:1px solid #E4EBF3; }}
+  .bar {{ position:absolute; top:3px; bottom:3px; border-radius:2px; background:var(--blue);
           display:flex; align-items:center; padding-left:8px; color:#fff; font-size:10.5px;
           overflow:hidden; white-space:nowrap; }}
-  .axis {{ font-size:10px; color:{MUTE}; display:flex; justify-content:space-between;
+  .axis {{ font-size:10px; color:var(--mute); display:flex; justify-content:space-between;
           padding-left:210px; }}
   /* 阶段条 */
   .pipe {{ display:flex; gap:0; flex:1; align-items:center; }}
-  .stage {{ flex:1; background:{BLUE}; color:#fff; text-align:center; padding:14px 6px;
+  .stage {{ flex:1; background:var(--blue); color:#fff; text-align:center; padding:14px 6px;
            clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%, 14px 50%);
            margin-right:-14px; }}
   .stage:first-child {{ clip-path:polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%); }}
@@ -128,24 +149,31 @@ BASE_CSS = f"""
   .stage .lb {{ font-size:13px; font-weight:700; }}
   .stage .ds {{ font-size:9.5px; opacity:.85; margin-top:3px; }}
   .imgwrap {{ flex:1; display:flex; align-items:center; justify-content:center; }}
-  .imgwrap img {{ max-width:100%; max-height:100%; border:1px solid {LINE}; border-radius:6px; }}
-  .cap {{ text-align:center; font-size:11px; color:{MUTE}; margin-top:6px; }}
-  /* 深蓝页 */
-  .dark {{ background:{NAVY}; color:#fff; justify-content:center; }}
+  .imgwrap img {{ max-width:100%; max-height:100%; border:1px solid var(--hair);
+                 border-radius:6px; background:#fff; }}
+  .cap {{ text-align:center; font-size:11px; color:var(--mute); margin-top:6px; }}
+  /* 深蓝页：封面/章节加图纸内衬框 */
+  .dark {{ background:var(--navy); color:#fff; justify-content:center; }}
   .dark .band {{ display:none; }}
-  .cover .ct {{ color:#cfe0f0; font-size:13px; margin-bottom:22px; }}
-  .cover h1 {{ font-size:34px; font-weight:800; line-height:1.35; }}
+  .dark::after {{ content:""; position:absolute; inset:16px; border:1px solid rgba(255,255,255,.24);
+                 border-radius:4px; pointer-events:none; }}
+  .cover .ct {{ color:#cfe0f0; font-size:13px; margin-bottom:22px; letter-spacing:.08em; }}
+  .cover h1 {{ font-size:35px; font-weight:700; line-height:1.4;
+              font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; }}
   .cover .sub {{ color:#bdd3ea; font-size:16px; margin-top:12px; }}
-  .cover .gold {{ width:80px; height:5px; background:{GOLD}; margin:22px 0; }}
+  .cover .gold {{ width:80px; height:4px; background:var(--gold); margin:22px 0; }}
   .cover .info {{ display:flex; gap:38px; font-size:13px; color:#e6eef6; margin-top:26px; }}
-  .section .num {{ font-size:120px; color:{LIGHT}; font-weight:800; line-height:1; }}
-  .section h2 {{ font-size:32px; font-weight:800; margin-top:4px; }}
+  .section .num {{ font-size:118px; color:var(--hair); font-weight:800; line-height:1;
+                  font-family:Georgia,"Times New Roman",serif; }}
+  .section h2 {{ font-size:33px; font-weight:700; margin-top:4px;
+                font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif; }}
   .section .en {{ color:#bdd3ea; font-size:15px; margin-top:8px; }}
-  .section .gold {{ width:80px; height:5px; background:{GOLD}; margin-top:20px; }}
+  .section .gold {{ width:80px; height:4px; background:var(--gold); margin-top:20px; }}
   .toc-item {{ display:flex; align-items:center; gap:14px; padding:7px 0; }}
-  .toc-item .no {{ color:{LIGHT}; font-size:15px; font-weight:800; width:30px; }}
+  .toc-item .no {{ color:var(--hair); font-size:15px; font-weight:800; width:30px;
+                  font-family:Georgia,"Times New Roman",serif; }}
   .toc-item .nm {{ font-size:15px; font-weight:700; }}
-  .toc-item .en {{ margin-left:auto; color:{LIGHT}; font-size:11.5px; }}
+  .toc-item .en {{ margin-left:auto; color:var(--hair); font-size:11.5px; }}
   .toc-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:4px 36px; }}
 """
 
@@ -220,6 +248,7 @@ def _slide_content(title, layout, bullets, extra, page_no, total, footer, tag=""
         stats = (extra or {}).get("stats", [])
         cards = "".join(
             f'<div class="stat"><div class="num">{ESC(str(s.get("number","")))}</div>'
+            f'<div class="dim"></div>'
             f'<div class="lbl">{ESC(str(s.get("label","")))}</div></div>'
             for s in stats)
         body = f'<div class="stats">{cards}</div>'
@@ -261,7 +290,8 @@ def _slide_content(title, layout, bullets, extra, page_no, total, footer, tag=""
         trs = "".join(
             "<tr>" + "".join(f"<td>{ESC(str(c))}</td>" for c in r) + "</tr>"
             for r in rows)
-        body = f'<table><thead><tr>{head}</tr></thead><tbody>{trs}</tbody></table>'
+        body = ('<div class="sheet"><table><thead><tr>' + head +
+                '</tr></thead><tbody>' + trs + '</tbody></table></div>')
     elif layout == "flow":
         nodes = extra.get("nodes") if extra else None
         body = _flow_html(nodes)

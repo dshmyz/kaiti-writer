@@ -22,17 +22,18 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.chart import XL_LABEL_POSITION
 
-# ── 北航蓝配色体系 ─────────────────────────────────────────────
-NAVY   = RGBColor(0x00, 0x33, 0x66)   # 主色·深蓝
-BLUE   = RGBColor(0x00, 0x5B, 0xAC)   # 次主色·亮蓝
+# ── 北航蓝配色体系（"批注过的图纸"：纸白 + 双阶蓝 + 赭金批注）──
+NAVY   = RGBColor(0x00, 0x33, 0x66)   # 主色·墨蓝
+BLUE   = RGBColor(0x00, 0x5B, 0xAC)   # 次主色·靛青
 LIGHT  = RGBColor(0xDC, 0xE9, 0xF7)   # 浅蓝底
 PALE   = RGBColor(0xEE, 0xF4, 0xFB)   # 极浅底
 GRAY   = RGBColor(0xF2, 0xF2, 0xF2)   # 中性灰底
-LINEC  = RGBColor(0xB9, 0xC8, 0xD9)   # 分隔线
-CARDLINE = RGBColor(0xDD, 0xE5, 0xEE)  # 卡片描边（极浅）
+LINEC  = RGBColor(0xC9, 0xD6, 0xE6)   # 发丝线（卡片描边/行分隔）
+CARDLINE = RGBColor(0xD9, 0xE2, 0xEE)  # 卡片描边（极浅）
+PAPER  = RGBColor(0xFB, 0xFC, 0xFE)   # 纸白（卡片/表格衬纸）
 TEXT   = RGBColor(0x2B, 0x2B, 0x2B)   # 正文深灰
 WHITE  = RGBColor(0xFF, 0xFF, 0xFF)
-ACCENT = RGBColor(0xD9, 0x7E, 0x00)   # 强调·暖橙（仅少量点缀）
+ACCENT = RGBColor(0xB9, 0x8A, 0x2F)   # 批注·赭金（仅用于标注：刻度/戳记/双细线）
 
 EA_FONT = "微软雅黑"
 LATIN_FONT = "Calibri"
@@ -281,7 +282,7 @@ def _draw_flow_v(slide, left, top, width, height, nodes) -> bool:
         for xi, item in enumerate(items):
             bx = left + m + xi * (bw + gap_x)
             box = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                         bx, y, bw, layer_h, fill=LIGHT, line=NAVY, line_w=1.4)
+                         bx, y, bw, layer_h, fill=PAPER, line=NAVY, line_w=1.1)
             try:
                 box.adjustments[0] = 0.12
             except Exception:
@@ -291,7 +292,7 @@ def _draw_flow_v(slide, left, top, width, height, nodes) -> bool:
         if li < n - 1:
             cx = left + width // 2
             _connector(slide, cx, int(y + layer_h), cx, int(y + layer_h + gap),
-                       color=NAVY, arrow=True)
+                       color=NAVY, width_pt=1.2, arrow=True)
         y += layer_h + gap
     return True
 
@@ -308,7 +309,7 @@ def _draw_flow_h(slide, left, top, width, height, nodes) -> bool:
     x = left + m
     for item in nodes:
         box = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                     x, top + m, bw, box_h, fill=LIGHT, line=NAVY, line_w=1.4)
+                     x, top + m, bw, box_h, fill=PAPER, line=NAVY, line_w=1.1)
         try:
             box.adjustments[0] = 0.14
         except Exception:
@@ -318,7 +319,7 @@ def _draw_flow_h(slide, left, top, width, height, nodes) -> bool:
     for i in range(n - 1):
         x1 = left + m + (i + 1) * bw + i * gap
         cy = top + height // 2
-        _connector(slide, x1, cy, x1 + gap, cy, color=NAVY, arrow=True)
+        _connector(slide, x1, cy, x1 + gap, cy, color=NAVY, width_pt=1.2, arrow=True)
     return True
 
 
@@ -508,6 +509,7 @@ def _draw_gantt(slide, left, top, width, height, data) -> bool:
 
 # ── 大数字卡片（数据页）───────────────────────────────────────
 def _draw_stats(slide, left, top, width, height, data) -> bool:
+    """大数字卡：纸白卡 + 衬线感大数字 + 尺寸标注线（发丝线 + 赭金端刻度）。"""
     stats = data.get("stats") or data.get("items") or []
     if isinstance(stats, dict):
         stats = list(stats.values())
@@ -524,25 +526,38 @@ def _draw_stats(slide, left, top, width, height, data) -> bool:
 
     for i, st in enumerate(stats):
         r, c = divmod(i, cols)
-        cx = left + m + c * (card_w + gap)
-        cy = top + gap * r + r * card_h
+        cx = int(left + m + c * (card_w + gap))
+        cy = int(top + gap * r + r * card_h)
         card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                      cx, cy, card_w, card_h, fill=PALE, line=LINEC, line_w=1.0)
+                      cx, cy, int(card_w), int(card_h), fill=PAPER,
+                      line=CARDLINE, line_w=0.75)
         try:
-            card.adjustments[0] = 0.06
+            card.adjustments[0] = 0.05
         except Exception:
             pass
+        _soft_shadow(card, blur=45720, dist=15875, alpha=12000)
         number = str(st.get("number", ""))
         label = str(st.get("label", ""))
-        num_color = ACCENT if i == 0 and number else NAVY
-        # 数字区占 55% 高，标签区占 45%
-        num_h = int(card_h * 0.55)
-        nbox = _shape(slide, MSO_SHAPE.RECTANGLE, cx, cy, card_w, num_h,
+        # 数字区占 52%，标注线居中其下，标签区占余下
+        num_h = int(card_h * 0.52)
+        nbox = _shape(slide, MSO_SHAPE.RECTANGLE, cx, cy, int(card_w), num_h,
                       fill=None, line=None)
-        _fit_text(nbox, number, 34, color=num_color, bold=True)
+        _fit_text(nbox, number, 36, color=NAVY, bold=True)
+        # 尺寸标注线：居中 56% 宽发丝线，两端赭金竖刻度
+        dl_w = int(card_w * 0.56)
+        dl_x = int(cx + (card_w - dl_w) / 2)
+        dl_y = int(cy + num_h + int(0.05 * _IN))
+        _shape(slide, MSO_SHAPE.RECTANGLE, dl_x, dl_y, dl_w,
+               max(int(0.75 * EMU_PER_PT), 9525), fill=LINEC, line=None)
+        tick_h = int(0.09 * _IN)
+        for tx in (dl_x, dl_x + dl_w - max(int(0.9 * EMU_PER_PT), 9525)):
+            _shape(slide, MSO_SHAPE.RECTANGLE, tx, int(dl_y - tick_h * 0.45),
+                   max(int(0.9 * EMU_PER_PT), 9525), tick_h, fill=ACCENT,
+                   line=None)
         if label:
-            lbox = _shape(slide, MSO_SHAPE.RECTANGLE, cx, cy + num_h,
-                          card_w, card_h - num_h, fill=None, line=None)
+            lbox = _shape(slide, MSO_SHAPE.RECTANGLE, cx, dl_y + int(0.07 * _IN),
+                          int(card_w), int(card_h - num_h - int(0.1 * _IN)),
+                          fill=None, line=None)
             _fit_text(lbox, label, 11, color=TEXT, bold=False,
                       align=PP_ALIGN.CENTER)
     return True
@@ -576,7 +591,6 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
         return False
     n = len(items)
     gap = int(0.16 * _IN)
-    accents = [BLUE, NAVY, ACCENT]
 
     # ── 2 条：大磁贴构图 ──
     if n == 2:
@@ -586,7 +600,7 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
         for i, b in enumerate(items):
             x = int(left + i * (tw + gap))
             tile = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y0,
-                          int(tw), int(th), fill=WHITE, line=CARDLINE, line_w=0.75)
+                          int(tw), int(th), fill=PAPER, line=CARDLINE, line_w=0.75)
             try:
                 tile.adjustments[0] = 0.06
             except Exception:
@@ -606,7 +620,7 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
                       margin_pct=0.04, lead=lead)
             _shape(slide, MSO_SHAPE.RECTANGLE, x + int(0.3 * _IN),
                    y0 + th - int(0.16 * _IN), int(0.9 * _IN), int(0.05 * _IN),
-                   fill=accents[i % 3], line=None)
+                   fill=BLUE, line=None)
         return True
 
     # ── ≥3 条：网格 + 底部核心横条 ──
@@ -626,53 +640,54 @@ def _draw_cards(slide, left, top, width, height, data) -> bool:
     block_h = rows * ch + (rows - 1) * gap
     y0 = int(top + max(0, (grid_h - block_h) / 2))
     font_pt = 12.5 if cols == 1 else 11.0
+    # 统一靛青细线：秩序感来自一致，赭金只留给"批注"（戳记/刻度）
     for i, b in enumerate(grid_items):
         r, c = divmod(i, cols)
         x = int(left + c * (cw + gap))
         y = int(y0 + r * (ch + gap))
-        ac = accents[i % 3]
         card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, x, y, int(cw), int(ch),
-                      fill=WHITE, line=CARDLINE, line_w=0.75)
+                      fill=PAPER, line=CARDLINE, line_w=0.75)
         try:
             card.adjustments[0] = 0.10
         except Exception:
             pass
-        _soft_shadow(card)
+        _soft_shadow(card, blur=45720, dist=15875, alpha=13000)
         stripe = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                        x, y + int(0.10 * _IN), int(0.055 * _IN),
+                        x, y + int(0.10 * _IN), int(0.045 * _IN),
                         int(max(ch - 0.20 * _IN, 6 * EMU_PER_PT)),
-                        fill=ac, line=None)
+                        fill=BLUE, line=None)
         try:
             stripe.adjustments[0] = 0.5
         except Exception:
             pass
-        d = int(0.36 * _IN)
+        d = int(0.34 * _IN)
         badge = _shape(slide, MSO_SHAPE.OVAL,
                        x + int(0.17 * _IN), y + (int(ch) - d) // 2, d, d,
-                       fill=ac, line=None)
-        _fit_text(badge, f"{i + 1}", font_pt, color=WHITE, bold=True)
+                       fill=WHITE, line=BLUE, line_w=1.1)
+        _fit_text(badge, f"{i + 1}", font_pt, color=NAVY, bold=True)
         pre, _rest = _split_prefix(b)
         lead = (pre, True, NAVY) if pre else None
         tb = _shape(slide, MSO_SHAPE.RECTANGLE,
-                    x + int(0.68 * _IN), y, int(cw - 0.82 * _IN), int(ch),
+                    x + int(0.66 * _IN), y, int(cw - 0.80 * _IN), int(ch),
                     fill=None, line=None)
         _fit_text(tb, b, font_pt, color=TEXT, align=PP_ALIGN.LEFT,
                   margin_pct=0.04, lead=lead)
     if has_takeaway:
+        # 结论条 = 图纸标题块：墨蓝底 + 赭金内衬细线 + 小戳记
         by = int(top + height - bar_h)
-        bar = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, left, by, width, bar_h,
+        bar = _shape(slide, MSO_SHAPE.RECTANGLE, left, by, width, bar_h,
                      fill=NAVY, line=None)
-        try:
-            bar.adjustments[0] = 0.28
-        except Exception:
-            pass
         _soft_shadow(bar, blur=45720, dist=15875, alpha=20000)
+        _shape(slide, MSO_SHAPE.RECTANGLE,
+               left + int(0.055 * _IN), by + int(0.055 * _IN),
+               width - int(0.11 * _IN), bar_h - int(0.11 * _IN),
+               fill=None, line=ACCENT, line_w=0.9)
         pill = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
-                      left + int(0.2 * _IN), by + (bar_h - int(0.34 * _IN)) // 2,
-                      int(0.88 * _IN), int(0.34 * _IN), fill=ACCENT, line=None)
+                      left + int(0.2 * _IN), by + (bar_h - int(0.32 * _IN)) // 2,
+                      int(0.84 * _IN), int(0.32 * _IN), fill=ACCENT, line=None)
         _fit_text(pill, "核心要点", 9.5, color=WHITE, bold=True)
-        tb = _shape(slide, MSO_SHAPE.RECTANGLE, left + int(1.25 * _IN), by,
-                    width - int(1.45 * _IN), bar_h, fill=None, line=None)
+        tb = _shape(slide, MSO_SHAPE.RECTANGLE, left + int(1.2 * _IN), by,
+                    width - int(1.4 * _IN), bar_h, fill=None, line=None)
         _fit_text(tb, items[-1], 12.5, color=WHITE, bold=True,
                   align=PP_ALIGN.LEFT, margin_pct=0.03)
     return True
@@ -716,48 +731,68 @@ def _draw_panels(slide, left, top, width, height, data) -> bool:
 
 # ── 对比表（方法对比 / 文献对比 / 通用表）─────────────────────
 def _draw_table(slide, left, top, width, height, data, first_col_label=False) -> bool:
+    """三线表（学界标准）：一张带投影的"衬纸"上，顶线/表头线/底线 + 发丝行线，
+    无竖线、无底纹——表头墨蓝加粗居中，首列可选加粗。"""
     headers = data.get("headers") or data.get("columns") or []
     rows = data.get("rows") or []
     if not headers or not rows:
         return False
     ncols = len(headers)
-    # 校验行宽，补齐
     rows = [r + [""] * (ncols - len(r)) for r in rows if r][:7]
+    nrows = len(rows)
 
-    header_h = int(max(0.13 * height, 26 * EMU_PER_PT))
-    row_h = (height - header_h) / len(rows)
-    if row_h < 24 * EMU_PER_PT:
-        row_h = 24 * EMU_PER_PT
+    pad = int(0.10 * _IN)
+    header_h = int(max(0.44 * _IN, 0.12 * height))
+    row_h = (height - pad * 2 - header_h) / nrows
+    if row_h < int(0.40 * _IN):
+        row_h = int(0.40 * _IN)
+    table_h = header_h + row_h * nrows
 
-    col_w = width / ncols
-    x = left
-    # 表头
+    # 衬纸：整张表落在一张带投影的纸上
+    sheet = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width,
+                   int(min(table_h + pad * 2, height)), fill=PAPER,
+                   line=CARDLINE, line_w=0.75)
+    try:
+        sheet.adjustments[0] = 0.025
+    except Exception:
+        pass
+    _soft_shadow(sheet, blur=57150, dist=19050, alpha=14000)
+
+    ix = left + pad
+    iw = width - pad * 2
+    col_w = iw / ncols
+    itop = top + pad
+
+    def hrule(y, w_pt, color=NAVY):
+        _shape(slide, MSO_SHAPE.RECTANGLE, ix, int(y), iw,
+               max(int(w_pt * EMU_PER_PT), 9525), fill=color, line=None)
+
+    # 表头文字（无底色，墨蓝加粗）
+    x = ix
     for j, h in enumerate(headers):
-        hb = _shape(slide, MSO_SHAPE.RECTANGLE, x, top, col_w, header_h,
-                    fill=NAVY, line=None)
-        _fit_text(hb, str(h), 12, color=WHITE, bold=True)
+        hb = _shape(slide, MSO_SHAPE.RECTANGLE, x, itop, col_w, header_h,
+                    fill=None, line=None)
+        _fit_text(hb, str(h), 12, color=NAVY, bold=True)
         x += col_w
-    # 数据行
-    y = top + header_h
+
+    # 数据行（首行文字与表头留出呼吸）
+    y = itop + header_h
     for i, row in enumerate(rows):
-        fill = PALE if i % 2 == 0 else GRAY
         for j, cell in enumerate(row):
             bold = (first_col_label and j == 0)
-            cfill = fill
-            if bold:
-                cfill = LIGHT
             cb = _shape(slide, MSO_SHAPE.RECTANGLE,
-                        left + j * col_w, y, col_w, row_h,
-                        fill=cfill, line=WHITE, line_w=1.0)
+                        ix + j * col_w, y, col_w, row_h,
+                        fill=None, line=None)
             _fit_text(cb, str(cell), 10.5, color=NAVY if bold else TEXT,
-                      bold=bold)
+                      bold=bold, margin_pct=0.06)
+        if i < nrows - 1:
+            hrule(y + row_h, 0.75, LINEC)
         y += row_h
-    # 外框
-    from pptx.oxml.ns import qn
-    from lxml import etree
-    for bj in range(ncols):
-        for ri in range(len(rows) + 1):
-            pass
+
+    # 三线：顶线、表头线、底线
+    hrule(itop, 2.25)
+    hrule(itop + header_h, 1.1)
+    hrule(y, 2.25)
     return True
 
 
