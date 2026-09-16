@@ -20,11 +20,13 @@ except ImportError:
 
 try:
     from render_diagrams import draw as draw_diagram
+    from render_diagrams import _shape as _rd_shape, _fit_text as _rd_fit
 except ImportError:
     # 以模块方式从别的目录导入时，脚本自身目录不在 sys.path
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
     from render_diagrams import draw as draw_diagram
+    from render_diagrams import _shape as _rd_shape, _fit_text as _rd_fit
 
 # 由 render_diagrams.py 原生绘制的图表布局（不再依赖模板占位文字）
 DIAGRAM_LAYOUTS = {"flow", "pipeline", "gantt", "stats", "compare",
@@ -221,40 +223,74 @@ def _group_overlapping_shapes(shapes, tol=50000):
     return groups
 
 
-def fill_toc(slide, chapters):
-    """目录页：检测重叠形状组，每组只用面积最大的一个，按视觉位置排序后填入序号和标题。"""
-    all_shapes = list(text_shapes(slide))
-    # 分离数字形状和标题形状
-    num_shapes = [s for s in all_shapes if re.fullmatch(r"0?\d{1,2}", s.text_frame.text.strip())]
-    title_shapes = [s for s in all_shapes if is_placeholder(s.text_frame.text) and "ADD YOUR" not in s.text_frame.text]
+_TOC_BRAND = ("目录", "contents", "context")
 
-    # 对数字形状分组（检测重叠），每组取面积最大的
-    num_groups = _group_overlapping_shapes(num_shapes)
-    num_slots = [max(g, key=lambda s: (s.width or 0) * (s.height or 0)) for g in num_groups]
-    num_slots.sort(key=lambda s: (s.top or 0, s.left or 0))
 
-    # 对标题形状分组（检测重叠），每组取面积最大的
-    title_groups = _group_overlapping_shapes(title_shapes)
-    title_slots = [max(g, key=lambda s: (s.width or 0) * (s.height or 0)) for g in title_groups]
-    title_slots.sort(key=lambda s: (s.top or 0, s.left or 0))
+def fill_toc(slide, chapters, slide_size=None):
+    """目录页：模板的数字/标题占位槽极易错位（序号换行、标题误配、章节数超槽），
+    一律清掉条目区旧形状，改为**原生绘制**序号+标题行——几章都排得下；
+    左侧品牌字（目录/CONTENTS）与装饰保留。>5 章自动两列。"""
+    import math
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import PP_ALIGN
+    SW, SH = slide_size or (12192000, 6858000)
+    BLUE_C = RGBColor(0x00, 0x5B, 0xAC)
+    INK_C = RGBColor(0x2B, 0x2B, 0x2B)
+    IN_EMU = 914400
 
-    # 填入标题
-    for i, sh in enumerate(title_slots):
-        set_text_keep_style(sh, chapters[i] if i < len(chapters) else "")
-    # 填入序号
-    for i, sh in enumerate(num_slots):
-        set_text_keep_style(sh, f"{i + 1:02d}" if i < len(chapters) else "")
-    # 多余的清空
-    for i in range(len(chapters), len(title_slots)):
-        set_text_keep_style(title_slots[i], "")
-    for i in range(len(chapters), len(num_slots)):
-        set_text_keep_style(num_slots[i], "")
-    # 兜底：清掉没被填中的占位/序号形状。填过的序号是带前导零的 "01"，
-    # 未选中的变体是 "1"、"请输入你的标题" 等，按当前文字模式区分即可。
-    for sh in text_shapes(slide):
+    # 1) 清掉条目区（右侧 55%）里的旧文本形状；品牌字与左侧装饰不动
+    for sh in list(_iter_all_shapes(slide)):
+        if not getattr(sh, "has_text_frame", False):
+            continue
         t = sh.text_frame.text.strip()
-        if is_placeholder(t) or re.fullmatch(r"[1-9]\d?", t) or DECOR_EXACT.match(t):
-            set_text_keep_style(sh, "")
+        if not t:
+            continue
+        t_clean = t.lower().replace(" ", "")
+        if any(b in t_clean for b in _TOC_BRAND):
+            continue
+        if (sh.left or 0) >= int(SW * 0.40):
+            _remove_shape(sh)
+
+    # 1.5) 清掉条目区里的小件装饰（模板目录的蓝色小箭头等，无文字、<0.5in）；
+    #      大件（校徽水印图片等）保留
+    for sh in list(_iter_all_shapes(slide)):
+        if sh.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            continue
+        if getattr(sh, "has_text_frame", False) and sh.text_frame.text.strip():
+            continue
+        if (sh.left or 0) < int(SW * 0.40):
+            continue
+        if (sh.width or 0) < int(0.5 * 914400) and (sh.height or 0) < int(0.5 * 914400):
+            _remove_shape(sh)
+
+    # 2) 原生绘制目录行（纵排分列：1..rows 左列，rows+1.. 右列）
+    n = len(chapters)
+    if n == 0:
+        clear_decor(slide)
+        clean_watermarks(slide)
+        return
+    cols = 2 if n > 5 else 1
+    rows = math.ceil(n / cols)
+    x0 = int(SW * 0.44)
+    y0 = int(SH * 0.18)
+    avail_h = int(SH * 0.64)
+    col_w = int(SW * (0.24 if cols == 2 else 0.48))
+    row_h = int(min(avail_h / rows, 0.62 * IN_EMU))
+    num_w = int(0.62 * IN_EMU)
+    y_block = int(y0 + max(0, (avail_h - rows * row_h) / 2))
+    for i, name in enumerate(chapters):
+        c, r = divmod(i, rows)
+        x = x0 + c * (col_w + int(0.10 * IN_EMU))
+        y = y_block + r * row_h
+        num = _rd_shape(slide, MSO_SHAPE.RECTANGLE, x, y, num_w, row_h,
+                        fill=None, line=None)
+        _rd_fit(num, f"{i + 1:02d}", 18, color=BLUE_C, bold=True,
+                align=PP_ALIGN.LEFT, margin_pct=0.02)
+        tb = _rd_shape(slide, MSO_SHAPE.RECTANGLE, x + num_w, y,
+                       col_w - num_w, row_h, fill=None, line=None)
+        _rd_fit(tb, str(name), 15, color=INK_C, bold=True,
+                align=PP_ALIGN.LEFT, margin_pct=0.03)
     clear_decor(slide)
     clean_watermarks(slide)
 
@@ -291,7 +327,7 @@ def fill_content(slide, title, bullets, layout="text_only", extra=None,
         _fill_diagram_slide(slide, title, extra, layout, slide_size)
         return
     if layout == "image_center" and extra:
-        _fill_image_slide(slide, title, extra)
+        _fill_image_slide(slide, title, extra, slide_size=slide_size)
         return
     if layout == "chart" and extra:
         _fill_chart_slide(slide, title, extra)
@@ -398,6 +434,33 @@ def _remove_shape(sh):
         parent.remove(el)
 
 
+def _shrink_title_to_fit(shape, text):
+    """标题超出模板标题框宽度时逐级缩字号，保证单行放下不截断。"""
+    from pptx.util import Pt
+    if not text or shape is None:
+        return
+    tf = shape.text_frame
+    pt = None
+    if tf.paragraphs and tf.paragraphs[0].runs:
+        size = tf.paragraphs[0].runs[0].font.size
+        pt = size.pt if size else None
+    if not pt:
+        return
+    inner = (shape.width or 0) * 0.90
+    if inner <= 0:
+        return
+
+    def text_w(p):
+        # 粗体中文字宽 >1em（宋体/雅黑加粗实测 ~1.05-1.1em），取 1.08 保守值
+        return sum((1.08 if ord(c) > 0x2E80 else 0.60) * p for c in str(text)) * 12700
+
+    while text_w(pt) > inner and pt > 10:
+        pt -= 1
+    for para in tf.paragraphs:
+        for r in para.runs:
+            r.font.size = Pt(pt)
+
+
 def _fill_diagram_slide(slide, title, diagram, layout, slide_size):
     """图表页：清空模板内容区占位文字，在标题下方的整块区域画原生图形。
 
@@ -413,6 +476,7 @@ def _fill_diagram_slide(slide, title, diagram, layout, slide_size):
         tshape, _ = _select_title_and_content(slots, SH)
     if tshape is not None:
         set_text_keep_style(tshape, title)
+        _shrink_title_to_fit(tshape, title)
         for sh in slots:
             if sh is not tshape:
                 set_text_keep_style(sh, "")
@@ -450,49 +514,72 @@ def _diagram_to_bullets(diagram):
     return [f"【图表内容待补充】{text[:60]}…"]
 
 
-def _fill_image_slide(slide, title, extra):
-    """全幅图片页：标题 + 居中图片 + 说明文字。"""
+def _fill_image_slide(slide, title, extra, slide_size=None):
+    """图片页：模板的三栏虚线框等装饰会和单张图片打架，一律清掉内容区
+    旧形状（快照判别），图片居中放大 + 底部小字说明。"""
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import PP_ALIGN
+    from PIL import Image as PILImage
+    SW, SH = slide_size or (12192000, 6858000)
+    IN_EMU = 914400
     image_path = extra.get("image", "")
     caption = extra.get("caption", "")
 
-    shapes = list(text_shapes(slide))
-    slots = [sh for sh in shapes if is_placeholder(sh.text_frame.text)]
-    used_ids = set()
-    img_slot = None
-    title_shape = None
-    caption_shape = None
+    slots = [sh for sh in text_shapes(slide) if is_placeholder(sh.text_frame.text)]
+    tshape = None
+    if slots:
+        tshape, _ = _select_title_and_content(slots, SH)
+    if tshape is not None:
+        set_text_keep_style(tshape, title)
+        _shrink_title_to_fit(tshape, title)
+        for sh in slots:
+            if sh is not tshape:
+                set_text_keep_style(sh, "")
+        region_top = (tshape.top or 0) + (tshape.height or 0) + int(SH * 0.03)
+    else:
+        region_top = int(SH * 0.16)
+    region_bottom = SH - int(SH * 0.10)
+    left = int(SW * 0.07)
+    width = SW - 2 * left
 
-    if slots and image_path:
-        img_slot = max(slots, key=lambda s: (s.width or 0) * (s.height or 0))
-        used_ids.add(id(img_slot))
+    # 清掉内容区里模板遗留的装饰/占位/图片（仅删绘制前已存在的形状）
+    before = {sh._element for sh in _iter_all_shapes(slide)}
+    for sh in list(_iter_all_shapes(slide)):
+        if sh._element not in before or sh is tshape:
+            continue
+        st = sh.top or 0
+        sb = st + (sh.height or 0)
+        if st >= region_top - int(SH * 0.02) and sb <= region_bottom + int(SH * 0.02):
+            _remove_shape(sh)
+
+    placed = False
+    if image_path:
         try:
-            left = img_slot.left
-            top = img_slot.top
-            width = img_slot.width
-            height = img_slot.height
-            set_text_keep_style(img_slot, "")
-            slide.shapes.add_picture(image_path, left, top, width, height)
+            im = PILImage.open(image_path)
+            iw, ih = im.size
+            max_w = width - int(0.3 * IN_EMU)
+            max_h = region_bottom - region_top - (int(0.45 * IN_EMU) if caption
+                                                   else int(0.12 * IN_EMU))
+            scale = min(max_w / iw, max_h / ih)
+            w, h = int(iw * scale), int(ih * scale)
+            x = left + (width - w) // 2
+            y = region_top + (region_bottom - region_top
+                              - h - (int(0.38 * IN_EMU) if caption else 0)) // 2
+            slide.shapes.add_picture(image_path, x, y, w, h)
+            placed = True
         except Exception:
-            set_text_keep_style(img_slot, f"【图片：{image_path}】{caption}")
-
-    # 填标题（取最靠近顶部的占位，避开图片位）
-    cand_titles = [sh for sh in slots if id(sh) not in used_ids]
-    if cand_titles:
-        title_shape = max(cand_titles, key=lambda s: (s.top or 0) * -1)  # top 最小
-        set_text_keep_style(title_shape, title)
-        used_ids.add(id(title_shape))
-    # 填说明文字
-    if caption:
-        cand_caps = [sh for sh in slots if id(sh) not in used_ids]
-        if cand_caps:
-            caption_shape = max(cand_caps, key=lambda s: (s.width or 0) * (s.height or 0))
-            set_text_keep_style(caption_shape, caption)
-            used_ids.add(id(caption_shape))
-    # 其余占位清空
-    for sh in slots:
-        if id(sh) not in used_ids:
-            set_text_keep_style(sh, "")
-    clear_decor(slide)
+            placed = False
+    if placed and caption:
+        cb = _rd_shape(slide, MSO_SHAPE.RECTANGLE, left,
+                       region_bottom - int(0.42 * IN_EMU), width,
+                       int(0.32 * IN_EMU), fill=None, line=None)
+        _rd_fit(cb, caption, 10.5, color=RGBColor(0x8A, 0x8A, 0x8A),
+                align=PP_ALIGN.CENTER)
+    if not placed:
+        # 图片缺失/加载失败：降级为卡片页
+        fill_content(slide, title, [f"【图片：{image_path or '缺失'}】{caption}"],
+                     "text_only", slide_size=slide_size)
     clean_watermarks(slide)
 
 
@@ -842,7 +929,8 @@ def build(template: Path, content_path: Path, output: Path):
     thanks_slide = slides[roles["thanks"] - 1] if roles.get("thanks") else None
 
     fill_cover(cover_slide, data)
-    fill_toc(toc_slide, [c["name"] for c in chapters])
+    fill_toc(toc_slide, [c["name"] for c in chapters],
+             slide_size=(prs.slide_width, prs.slide_height))
 
     order = [cover_slide, toc_slide]
     sec_pool = [slides[i - 1] for i in roles["section"]]

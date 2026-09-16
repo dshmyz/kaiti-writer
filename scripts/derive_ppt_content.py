@@ -235,13 +235,21 @@ def _panels_data(items: list) -> dict | None:
     return {"panels": panels} if len(panels) >= 2 else None
 
 
-def _outline_table(bullets: list) -> dict | None:
-    """论文大纲节：拆「第一章 绪论：…」→ 章节|内容 表。不足三章返回 None。"""
-    rows = []
-    for b in bullets:
-        m = re.match(r"^(第[一二三四五六七八九十]+章)\s*([^：:：]*?)[：:]\s*(.*)$", b)
-        if m:
-            rows.append([m.group(1) + m.group(2), m.group(3)[:32]])
+def _outline_table(items: list, bullets: list) -> dict | None:
+    """论文大纲节：拆「第一章 绪论：…」→ 章节|内容 表。优先从原文 items 解析
+    （bullets 被切碎且截断，会丢后面的章节），bullets 兜底。不足三章返回 None。"""
+
+    def parse(source):
+        rows = []
+        for b in source:
+            if not isinstance(b, str):
+                continue
+            m = re.match(r"^(第[一二三四五六七八九十]+章)\s*([^：:：]*?)[：:]\s*(.*)$", b.strip())
+            if m:
+                rows.append([m.group(1) + m.group(2), m.group(3)[:32]])
+        return rows
+
+    rows = parse(items) or parse(bullets)
     return {"headers": ["章节", "内容"], "rows": rows} if len(rows) >= 3 else None
 
 
@@ -386,7 +394,7 @@ def _build_chapter_slides(key: str, name: str, bullets: list, special_slides: li
         slides.append(_make_slide(name, bullets, "panels", panels))
         slides.extend(special_slides)
         return slides
-    outline = _outline_table(bullets)
+    outline = _outline_table(items, bullets)
     if outline:
         slides.append(_make_slide(name, bullets, "compare", outline))
         slides.extend(special_slides)
