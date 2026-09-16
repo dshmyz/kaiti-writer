@@ -27,7 +27,8 @@ except ImportError:
     from render_diagrams import draw as draw_diagram
 
 # 由 render_diagrams.py 原生绘制的图表布局（不再依赖模板占位文字）
-DIAGRAM_LAYOUTS = {"flow", "pipeline", "gantt", "stats", "compare", "table", "bars"}
+DIAGRAM_LAYOUTS = {"flow", "pipeline", "gantt", "stats", "compare",
+                   "table", "bars", "cards"}
 
 # 各模板的页角色索引（1-based，来自实际探查）
 TEMPLATE_MAP = {

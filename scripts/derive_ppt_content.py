@@ -343,13 +343,17 @@ def _build_chapter_slides(key: str, name: str, bullets: list, special_slides: li
             slides.extend(special_slides)
             return slides
 
-    # 兜底：文字要点页
+    # 兜底：要点卡片页（文字也有视觉焦点——借鉴高分答辩稿的容器化排版，
+    # 不再把条目干巴巴堆在模板框里）
     if bullets:
-        if len(bullets) > 5:
-            slides.append(_make_slide(name, bullets[:5], "text_only"))
-            slides.append(_make_slide(f"{name}（续）", bullets[5:], "text_only"))
+        trimmed = [b if len(b) <= 32 else b[:32] + "…" for b in bullets]
+        if len(trimmed) > 6:
+            slides.append(_make_slide(name, trimmed[:6], "cards",
+                                      {"items": trimmed[:6]}))
+            slides.append(_make_slide(f"{name}（续）", trimmed[6:], "cards",
+                                      {"items": trimmed[6:]}))
         else:
-            slides.append(_make_slide(name, bullets, "text_only"))
+            slides.append(_make_slide(name, trimmed, "cards", {"items": trimmed}))
     slides.extend(special_slides)
     return slides
 

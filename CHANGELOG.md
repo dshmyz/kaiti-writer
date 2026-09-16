@@ -1,6 +1,17 @@
 # Changelog（开题报告技能）
 
 
+## 本地补丁（2026-09-16，纠偏 + 文字页卡片化）
+
+**纠偏**：上一轮会话我跑偏去做了"自定义版式生成器"（不用北航模板、参考往届稿设计），用户明确不满——skill 只需优化、借鉴内容布局、保留北航模板。已 `git revert` 那两个提交，删除 `build_visual_ppt.py`，回归"只用北航模板"。
+
+**借鉴内容布局（保留在模板上）**：
+- `render_diagrams.py` 新增 `cards` 布局：每条要点一张圆角卡片 + 序号徽章，替代干巴巴的文字条目——把"每页一个视觉焦点"的布局思路用回北航模板，不抄参考稿外观
+- `derive_ppt_content.py` 文字节默认走 `cards`（要点自动压到 ≤32 字关键词，超 6 条拆两页），不再产出 `text_only` 页——整份 PPT 每页都有视觉容器（flow/gantt/stats/compare/cards）
+
+**验证**：黄群稿 content.json 派生 11 页内容 = cards 6 / compare 2 / flow 1 / image 1 / gantt 1，模板1 生成 24 页，零占位残留、pptx validate 通过。
+
+
 ## 本地补丁（2026-09-15，PPT 视觉升级：原生图表）
 
 **问题**：汇报 PPT 全是文字 bullets，难看。模板自带流程图/时间轴/大数字等视觉页，但生成脚本只用了纯文字页，derive 也几乎全产出 text_only。

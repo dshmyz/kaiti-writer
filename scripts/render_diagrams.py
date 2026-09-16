@@ -186,6 +186,8 @@ def draw(slide, layout: str, box, data: dict | None):
         return _draw_gantt(slide, left, top, width, height, data)
     if layout == "stats":
         return _draw_stats(slide, left, top, width, height, data)
+    if layout == "cards":
+        return _draw_cards(slide, left, top, width, height, data)
     if layout == "compare":
         return _draw_table(slide, left, top, width, height, data, first_col_label=True)
     if layout == "table":
@@ -506,6 +508,44 @@ def _draw_stats(slide, left, top, width, height, data) -> bool:
                           card_w, card_h - num_h, fill=None, line=None)
             _fit_text(lbox, label, 11, color=TEXT, bold=False,
                       align=PP_ALIGN.CENTER)
+    return True
+
+
+# ── 编号卡片（文字要点也有视觉焦点，参考高分答辩稿的容器化排版）────
+_IN = 914400
+
+
+def _draw_cards(slide, left, top, width, height, data) -> bool:
+    """要点卡片页：每条要点一张圆角卡 + 序号徽章，替代干巴巴的文字条目。"""
+    items = data.get("items") or data.get("cards") or data.get("bullets") or []
+    items = [str(i) for i in items if str(i).strip()]
+    if not items:
+        return False
+    items = items[:6]
+    gap = int(0.20 * _IN)
+    ch = min((height - gap * (len(items) - 1)) / len(items), int(1.0 * _IN))
+    if ch < int(0.5 * _IN):
+        ch = int(0.5 * _IN)
+    for i, b in enumerate(items):
+        y = int(top + i * (ch + gap))
+        card = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, left, y, width, int(ch),
+                      fill=PALE, line=LINEC, line_w=1.0)
+        try:
+            card.adjustments[0] = 0.09
+        except Exception:
+            pass
+        badge = _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE,
+                       left + int(0.24 * _IN), y + int(0.22 * _IN),
+                       int(0.5 * _IN), int(0.5 * _IN), fill=NAVY, line=None)
+        try:
+            badge.adjustments[0] = 0.3
+        except Exception:
+            pass
+        _fit_text(badge, f"{i + 1}", 13, color=WHITE, bold=True)
+        tb = _shape(slide, MSO_SHAPE.RECTANGLE,
+                    left + int(1.02 * _IN), y, width - int(1.18 * _IN), int(ch),
+                    fill=None, line=None)
+        _fit_text(tb, b, 13, color=TEXT, align=PP_ALIGN.LEFT, margin_pct=0.06)
     return True
 
 
