@@ -235,7 +235,7 @@ description: 撰写、审阅、修订北京航空航天大学（北航）研究�
 - `templates/开题报告大纲.md` — 内容草稿脚手架；`templates/范例-问题研究型.md` — 参考范文
 - `templates/内容示例-社区减负.json`（问题研究型，**含表格/插图/列表/脚注四种混排块示例**）、`内容示例-案例分析.json`、`内容示例-调研分析.json`、`内容示例-政策分析.json` — content.json 格式示例（四类各一）
 - `assets/templates/ppt/模板1-北航答辩通用.pptx`、`模板2-…`、`模板3-…` — 三套内置答辩 PPT 模板（16:9，生成 PPT 时让用户选）
-- `scripts/build_visual_ppt.py` — **汇报 PPT 生成器（推荐）**：学术答辩风版式（参照高分答辩稿——深蓝封面/章节分隔 + 浅色内容页，PART 分节 + X.Y 编号小节，页脚校名+页码，金色点缀）；不依赖外部模板；文字要点做卡片；关键页用 render_diagrams 画原生图形；先写 PPT 大纲（md）再照大纲渲染
+- `scripts/build_visual_ppt.py` — **现代视觉版汇报 PPT 生成器**（推荐）：自建北航蓝设计系统，不依赖外部模板；封面/目录/章节分隔/内容卡/图表页/致谢每页有设计；文字要点做卡片；先写 PPT 大纲（md）再照大纲渲染
 - `scripts/build_ppt_from_template.py` — 基于内置模板生成汇报 PPT（改而不建，自动清水印/占位；支持 flow/gantt/stats/compare/pipeline/bars 原生图表布局，生成后自动调 pptx 技能 validate.py 做文件级验证）
 - `scripts/render_diagrams.py` — 原生图表渲染库：流程图/甘特/大数字/对比表/阶段条/柱状图，北航蓝配色、可编辑、零新增依赖（仅 python-pptx）
 - `scripts/derive_ppt_content.py` — 从 content.json 自动派生 ppt_content.json，并按内容结构自动选用图表布局（实施计划→gantt、研究思路/框架→flow、方法→compare、数据→stats、阶段→pipeline）
