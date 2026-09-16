@@ -1,17 +1,6 @@
 # Changelog（开题报告技能）
 
 
-## 本地补丁（2026-09-15，PPT 视觉升级二：现代视觉版生成器）
-
-**问题**：模板版 PPT 即便加了原生图表，整体仍被模板旧样式与文字页主导，用户反馈"还是全文字、丑"。
-
-**新增**：
-- **`scripts/build_visual_ppt.py`**（新）：自建北航蓝+金色点缀设计系统的汇报 PPT 生成器，**不依赖外部模板**。封面/目录（编号卡片）/章节分隔页/内容卡片页/图表页/致谢每页都有版式；文字要点做成带序号徽章的卡片，不再堆条目；研究框架/思路/方法/计划等关键页复用 render_diagrams.py 画原生图形（flow/gantt/compare/stats/table）。19 页整份风格统一。
-- **工作流改为"先写大纲再渲染"**：生成 PPT 前先产出一页一页的 PPT 大纲 md（页码|版式|每页观点句|要点），用户过目后再照大纲渲染，不再直接从 content.json 堆页面。一站式收尾.md 已把现代视觉版列为推荐路径，模板版降为备选。
-
-**使用**：`python scripts/build_visual_ppt.py --content ppt_content.json --output 开题汇报-<题>-视觉版.pptx`；ppt_content.json 的 layout 增加 `cards`（文字卡片页）；生成后过 pptx 技能 validate.py 文件级校验。
-
-
 ## 本地补丁（2026-09-15，PPT 视觉升级：原生图表）
 
 **问题**：汇报 PPT 全是文字 bullets，难看。模板自带流程图/时间轴/大数字等视觉页，但生成脚本只用了纯文字页，derive 也几乎全产出 text_only。
