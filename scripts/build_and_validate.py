@@ -449,6 +449,9 @@ def main():
     if args.regress:
         regress_report(args.regress, args.output)
 
+    # === Step 6: 字数统计（各节正文汉字，对照篇幅档位用） ===
+    wordcount_report(args.content)
+
     print(f"\n{'='*50}")
     if validate_ok and quality_ok:
         print(f"  ✅ 全部完成：{args.output}")
@@ -460,6 +463,37 @@ def main():
 def _is_toc_line(text):
     """目录行特征：tab+页码结尾，或长引导点。"""
     return bool(re.search(r"\t\d+$", text)) or "……" in text or bool(re.search(r"\.{6,}", text))
+
+
+def wordcount_report(content_path):
+    """各节正文汉字统计（不含封面/目录/参考文献/附录）——
+    起草后对照 `references/篇幅档位.md` 的档位目标，写够不注水。"""
+    import json
+    import re as _re
+    try:
+        with open(content_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"⚠️ 字数统计跳过（读 content 失败：{e}）")
+        return
+    cjk = _re.compile(r"[一-鿿]")
+
+    def text_of(block):
+        if isinstance(block, str):
+            return block
+        if isinstance(block, dict):
+            return " ".join(text_of(v) for k, v in block.items() if k != "image")
+        if isinstance(block, list):
+            return " ".join(text_of(b) for b in block)
+        return ""
+
+    print("\n=== Step 6: 字数统计（正文汉字，不含封面/目录/参考文献/附录） ===")
+    total = 0
+    for heading, blocks in (data.get("content_by_section") or {}).items():
+        n = len(cjk.findall(text_of(blocks)))
+        total += n
+        print(f"  {heading}: {n} 字")
+    print(f"  合计: {total} 字（对照篇幅档位目标：精简≈6000 / 标准≈8000 / 充实≈10000）")
 
 
 def regress_report(old_path, new_path, max_show=10):

@@ -1,6 +1,22 @@
 # Changelog（开题报告技能）
 
 
+## 本地补丁（2026-10-12，全链路自测 + 5 项用户体验改进）
+
+**全链路自测（9 项脚本全过）**：check_refs_quality（双阈值）、build_and_validate（正常/skip-validate/阈值透传三路）、build_from_template（附录/文献/节全渲染）、read_docx（北航官方模板为段落式正文，手填稿可读；表格式异构模板不在支持范围）、make_route_figure（6 层出图+超高警告）、renumber_refs --check（1–21 合规）、derive_ppt_content（11 页自动版式）、preview_ppt_html（24 页）、build_ppt_from_template（北航模板1 → 24 页 PPTX）。
+
+**UX 改进（5 项）**：
+- **快速模式**：入口新增第 4 选项——题目已想好的用户最少打断（默认 MPA/标准档/文献 20 篇/外文 ≥5/决策树定类型/不拟问卷），只停题目、大纲两个硬闸，综述与方法分节确认合并。
+- **偏好跨会话记忆 user_profile.json**：方向/篇幅档/文献篇数/封面四项存档，下次开工第一句告知沿用不重问；封面信息自动填模板，定稿清单项消失；用户说"别记"即删。
+- **Step 6 字数统计**：build_and_validate 构建后自动报各节正文汉字与合计（对照 精简≈6000/标准≈8000/充实≈10000），写入 content_by_section 遍历+CJK 计数，实测 7486 字输出正常。
+- **生成后主动呈文件**：docx/PPTX 生成后报绝对路径+字数落档说明，Claude Code 环境直接用系统工具打开呈现；构建 ⚠️ 项当场如实念给用户。
+- **过程可感知两处**：文献检索每完成一个渠道/凑齐 10 条说一句进展（消最长等待的焦虑）；每节回显附 3–5 处去AI化典型改例（改前→改后），比一句"已去AI化"有说服力。
+
+**改动文件**：SKILL.md、scripts/build_and_validate.py（新增 wordcount_report/Step 6）。
+
+**测试**：py_compile 通过；真模板+真 content.json 全构建回归通过，Step 6 各节字数与合计输出正确。
+
+
 ## 本地补丁（2026-10-12，附录验证顺带修 build_and_validate 崩溃）
 
 - **附录功能验证无损**：真模板 + 真 content.json 构建，输出 docx 中目录"附录"条目、正文"提纲全文见附录"交叉引用、附录A 访谈提纲全文均在；模板/规范中附录要求（含问卷/访谈须附提纲、B2 核对项）未受本会话任何改动影响。
