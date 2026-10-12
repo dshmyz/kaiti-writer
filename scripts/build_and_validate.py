@@ -433,6 +433,7 @@ def main():
         run_step("Step 2.5: 清除全文档噪声红", fix_cmd)
 
     # === Step 3: 规范检查 ===
+    validate_ok = True
     if not args.skip_validate:
         validate_ok = validate_docx(args.output)
 
