@@ -6,7 +6,11 @@
 用法：
   python3 check_refs_quality.py --content content.json
   python3 check_refs_quality.py --content content.json \
-      --current-year 2026 --core-journals "中国行政管理,公共管理学报,法学研究"
+      --current-year 2026 --core-journals "中国行政管理,公共管理学报,法学研究" \
+      --min-refs 20
+
+--min-refs 为数量闸阈值：默认 15（评审底线）；用户在检索前选定的篇数传进来，
+数量不足即报 ⚠️。
 
 输出逐项 ✅/⚠️，供 agent 在文献检索步骤（SKILL.md 步骤 2 质量闸）与
 构建流程（build_and_validate Step 4）自动调用。只报告不修改。
@@ -44,6 +48,8 @@ def main():
     ap.add_argument("--current-year", type=int, default=None, help="当前年份（默认取系统时间）")
     ap.add_argument("--core-journals", default="",
                     help="逗号分隔的本学科核心期刊名，命中计数（学科配比判断依据）")
+    ap.add_argument("--min-refs", type=int, default=15,
+                    help="数量闸阈值：总条目须 ≥ 该值（默认 15 = 评审底线；用户选定篇数传入）")
     args = ap.parse_args()
 
     import datetime
@@ -58,7 +64,13 @@ def main():
         sys.exit(1)
 
     issues = []
-    print(f"参考文献共 {n} 条，当前年份 {cy}")
+    print(f"参考文献共 {n} 条，当前年份 {cy}（数量闸阈值 {args.min_refs}）")
+
+    # 0) 数量闸（阈值默认 15 = 评审底线；用户选定篇数经 --min-refs 传入）
+    if n >= args.min_refs:
+        print(f"✅ 总条目 {n} ≥ {args.min_refs}")
+    else:
+        issues.append(f"总条目仅 {n} 条，未达 {args.min_refs} 条（数量闸）——继续检索补足")
 
     # 1) 类型分布
     type_count = OrderedDict((name, 0) for name in TYPE_PATTERNS)

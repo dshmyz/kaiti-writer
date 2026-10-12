@@ -1,6 +1,17 @@
 # Changelog（开题报告技能）
 
 
+## 本地补丁（2026-10-12，文献数量可选 + 大纲标题细化）
+
+**新增**：
+- **文献引用数量改为用户可选**（原来写死 ≥15 篇）：检索开始前用一次 AskUserQuestion 问篇数（15 评审底线 / 20 推荐·默认 / 30 充实 / 自定义），低于 15 篇要警告并经用户确认，选定值记入 progress.json（`user_preferences.ref_count`）。`check_refs_quality.py` 新增 `--min-refs`（默认 15）数量闸，`build_and_validate.py` 新增同名透传参数；正文实际引用数与文献表条数须一致（不能只堆文献表）。规则落在 `references/文献检索.md`「文献数量」一节，SKILL.md 起草流程第 2 步与逐节质量闸同步。
+- **大纲标题细化闸**：论文大纲各章/节标题必须细化到"研究对象 + 具体问题"，禁止"现状分析/存在问题/对策建议"式万能标题（移植测试：标题搬到别的论文还成立＝不通过）；编号体系全文唯一（社科 `一、/（一）/1、`，理工 `第一章/1.1/1.1.1`）、标题末不加标点。落在 SKILL.md 搭大纲步骤、`选题引导.md` 大纲自查（四问→**五问**，新增标题具体度+格式）、`论文类型详解.md` 通用要素注释、`templates/开题报告大纲.md` 正反例示例、`自查清单.md` 新增核对项。
+
+**改动文件**：SKILL.md、references/文献检索.md、references/选题引导.md、references/论文类型详解.md、references/自查清单.md、references/审阅已有稿.md、references/篇幅档位.md、templates/开题报告大纲.md、scripts/check_refs_quality.py、scripts/build_and_validate.py。
+
+**验证**：check_refs_quality.py 对现成 content.json（21 条）实测——`--min-refs 999` 报 ⚠️"未达 999 条"、默认 15 报 ✅"21 ≥ 15"；两脚本 py_compile 通过。
+
+
 ## 本地补丁（2026-09-16，HTML 预览先行 + 自适应布局）
 
 **新增**：

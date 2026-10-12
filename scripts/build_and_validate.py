@@ -380,6 +380,8 @@ def main():
     parser.add_argument("--clear-noise-red", action="store_true",
                         help="清全文档非确认红（正文/目录/附录），只保留含〈待确认〉标记的红")
     parser.add_argument("--skip-fix-refs", action="store_true", help="跳过 fix_refs 步骤")
+    parser.add_argument("--min-refs", type=int, default=15,
+                        help="参考文献数量闸阈值（默认 15 = 评审底线；传用户选定篇数）")
     parser.add_argument("--skip-validate", action="store_true", help="跳过规范检查步骤")
     parser.add_argument("--regress", default=None,
                         help="改稿回归门禁：传入旧版 .docx 路径，构建后自动输出新旧正文逐段差异（防改 A 伤 B）")
@@ -432,10 +434,11 @@ def main():
     if not args.skip_validate:
         validate_ok = validate_docx(args.output)
 
-    # === Step 4: 参考文献质量闸（类型分布/近5年/学科配比证据/待核验残留） ===
+    # === Step 4: 参考文献质量闸（数量/类型分布/近5年/学科配比证据/待核验残留） ===
     quality_ok = True
     if os.path.isfile(quality_script):
-        quality_cmd = [sys.executable, quality_script, "--content", args.content]
+        quality_cmd = [sys.executable, quality_script, "--content", args.content,
+                       "--min-refs", str(args.min_refs)]
         quality_ok = run_step("Step 4: 参考文献质量闸", quality_cmd)
 
     # === Step 5: 改稿回归门禁（新旧 docx 逐段差异报告） ===
