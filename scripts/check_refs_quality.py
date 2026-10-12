@@ -10,7 +10,8 @@
       --min-refs 20
 
 --min-refs 为数量闸阈值：默认 15（评审底线）；用户在检索前选定的篇数传进来，
-数量不足即报 ⚠️。
+数量不足即报 ⚠️。--min-foreign-refs 为外文数量闸阈值：默认 5（外文文献 ≥5 篇）；
+"真实、权威、著录正确"三条由 agent 结合 source_quality_hierarchy 分级判断。
 
 输出逐项 ✅/⚠️，供 agent 在文献检索步骤（SKILL.md 步骤 2 质量闸）与
 构建流程（build_and_validate Step 4）自动调用。只报告不修改。
@@ -50,6 +51,8 @@ def main():
                     help="逗号分隔的本学科核心期刊名，命中计数（学科配比判断依据）")
     ap.add_argument("--min-refs", type=int, default=15,
                     help="数量闸阈值：总条目须 ≥ 该值（默认 15 = 评审底线；用户选定篇数传入）")
+    ap.add_argument("--min-foreign-refs", type=int, default=5,
+                    help="外文数量闸阈值：外文条目须 ≥ 该值（默认 5；真实/权威/著录正确由 agent 结合来源分级判断）")
     args = ap.parse_args()
 
     import datetime
@@ -98,10 +101,15 @@ def main():
     else:
         issues.append(f"近 5 年占比仅 {recent_pct}%（{recent}/{n}，阈值 50%）——补充近年文献")
 
-    # 3) 中英构成
+    # 3) 中英构成（外文数量闸：外文 ≥ 阈值，真实/权威/著录正确由 agent 判断）
     cjk = re.compile(r"[一-鿿]")
     cn = sum(1 for r in refs if cjk.search(r))
-    print(f"中英构成: 中文 {cn} / 外文 {n - cn}")
+    foreign = n - cn
+    if foreign >= args.min_foreign_refs:
+        print(f"✅ 中英构成: 中文 {cn} / 外文 {foreign}（外文 ≥ {args.min_foreign_refs}）")
+    else:
+        issues.append(f"外文文献仅 {foreign} 条，未达 {args.min_foreign_refs} 条（外文数量闸）——"
+                      f"OpenAlex/Crossref 换英文检索词补检，凑不出贴题外文须告知用户")
 
     # 4) 核心期刊命中（学科配比的客观证据，最终判断由 agent 结合选题给出）
     if core_list:

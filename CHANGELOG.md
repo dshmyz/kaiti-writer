@@ -1,6 +1,18 @@
 # Changelog（开题报告技能）
 
 
+## 本地补丁（2026-10-12，外文文献硬标准 ≥5 篇）
+
+**新增**：
+- **文献选择标准加一条硬项：外文文献 ≥5 篇，且"真实、权威、著录正确"三条全过**——真实=DOI/开放元数据可核验不臆造；权威=SSCI/Scopus 国际期刊或知名出版社，按 `ars-imports/source_quality_hierarchy.md` 分级筛、不收掠夺期刊；著录正确=GB/T 7714 外文规则（姓前名后姓全大写，如 `TANG C S`，类型码卷期页码齐全）。
+- **告知用户落在两处**：①检索前问篇数时，提问文案里明确说"无论选多少篇，其中至少 5 篇须为外文文献（真实、权威、著录正确）"；②交付时如实说明外文是否满 5 篇、不满缺哪些。确实检不出 5 篇贴题外文时不许凑数，如实告知并记"定稿前待办"。
+- **质量闸四项扩为五项**（新增"外文文献"项）；`check_refs_quality.py` 把"中英构成"从纯展示升级为外文数量闸（`--min-foreign-refs`，默认 5，不足即 ⚠️ 并给补检指引）；`build_and_validate.py` 加同名透传参数。
+
+**改动文件**：SKILL.md、references/文献检索.md（「文献数量」规则 5 + 质量闸五项 + 定稿前提示）、references/自查清单.md、references/审阅已有稿.md、references/篇幅档位.md、templates/开题报告大纲.md、scripts/check_refs_quality.py、scripts/build_and_validate.py。
+
+**验证**：现成 content.json（中文 9 / 外文 12）实测——`--min-foreign-refs 5` 报 ✅"外文 ≥ 5"，`--min-foreign-refs 999` 报 ⚠️"外文文献仅 12 条"；两脚本 py_compile 通过。
+
+
 ## 本地补丁（2026-10-12，文献数量可选 + 大纲标题细化）
 
 **新增**：

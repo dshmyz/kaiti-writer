@@ -382,6 +382,8 @@ def main():
     parser.add_argument("--skip-fix-refs", action="store_true", help="跳过 fix_refs 步骤")
     parser.add_argument("--min-refs", type=int, default=15,
                         help="参考文献数量闸阈值（默认 15 = 评审底线；传用户选定篇数）")
+    parser.add_argument("--min-foreign-refs", type=int, default=5,
+                        help="外文文献数量闸阈值（默认 5；传用户/导师要求的外文篇数）")
     parser.add_argument("--skip-validate", action="store_true", help="跳过规范检查步骤")
     parser.add_argument("--regress", default=None,
                         help="改稿回归门禁：传入旧版 .docx 路径，构建后自动输出新旧正文逐段差异（防改 A 伤 B）")
@@ -438,7 +440,8 @@ def main():
     quality_ok = True
     if os.path.isfile(quality_script):
         quality_cmd = [sys.executable, quality_script, "--content", args.content,
-                       "--min-refs", str(args.min_refs)]
+                       "--min-refs", str(args.min_refs),
+                       "--min-foreign-refs", str(args.min_foreign_refs)]
         quality_ok = run_step("Step 4: 参考文献质量闸", quality_cmd)
 
     # === Step 5: 改稿回归门禁（新旧 docx 逐段差异报告） ===
